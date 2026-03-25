@@ -1,143 +1,305 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase/client'
 import './styling.css'
 
-type Tab = 'dashboard' | 'profiles' | 'images' | 'captions'
+type NavGroup = 'dashboard' | 'profiles' | 'images' | 'captions' | 'humor' | 'llm'
+type Tab =
+  | 'dashboard'
+  | 'profiles' | 'whitelisted_emails'
+  | 'images'
+  | 'captions' | 'caption_examples' | 'caption_requests'
+  | 'humor_flavors' | 'humor_flavor_steps'
+  | 'llm_models' | 'llm_providers' | 'llm_responses'
+
+const ITEMS_PER_PAGE = 10
+
+const NAV_GROUPS: { group: NavGroup; label: string; tabs?: { tab: Tab; label: string }[] }[] = [
+  { group: 'dashboard', label: 'Dashboard' },
+  {
+    group: 'profiles', label: 'Profiles',
+    tabs: [
+      { tab: 'profiles', label: 'Profiles' },
+      { tab: 'whitelisted_emails', label: 'Whitelisted Emails' },
+    ],
+  },
+  { group: 'images', label: 'Images' },
+  {
+    group: 'captions', label: 'Captions',
+    tabs: [
+      { tab: 'captions', label: 'Captions' },
+      { tab: 'caption_examples', label: 'Caption Examples' },
+      { tab: 'caption_requests', label: 'Caption Requests' },
+    ],
+  },
+  {
+    group: 'humor', label: 'Humor',
+    tabs: [
+      { tab: 'humor_flavors', label: 'Humor Flavors' },
+      { tab: 'humor_flavor_steps', label: 'Flavor Steps' },
+    ],
+  },
+  {
+    group: 'llm', label: 'LLM Info',
+    tabs: [
+      { tab: 'llm_models', label: 'LLM Models' },
+      { tab: 'llm_providers', label: 'LLM Providers' },
+      { tab: 'llm_responses', label: 'LLM Responses' },
+    ],
+  },
+]
+
+function usePage() {
+  const [page, setPage] = useState(1)
+  return { page, setPage }
+}
 
 export default function Page() {
   const [user, setUser] = useState<any>(null)
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('dashboard')
+  const [openGroup, setOpenGroup] = useState<NavGroup | null>(null)
+  const navRef = useRef<HTMLDivElement>(null)
+
+  const [previewImg, setPreviewImg] = useState<string | null>(null)
+  const [previewText, setPreviewText] = useState<{ title: string; content: string } | null>(null)
+  const [toast, setToast] = useState<string | null>(null)
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 2000)
+  }
 
   const [profiles, setProfiles] = useState<any[]>([])
   const [images, setImages] = useState<any[]>([])
   const [captions, setCaptions] = useState<any[]>([])
-
+  const [captionExamples, setCaptionExamples] = useState<any[]>([])
+  const [captionRequests, setCaptionRequests] = useState<any[]>([])
+  const [humorFlavors, setHumorFlavors] = useState<any[]>([])
+  const [humorFlavorSteps, setHumorFlavorSteps] = useState<any[]>([])
+  const [llmModels, setLlmModels] = useState<any[]>([])
+  const [llmProviders, setLlmProviders] = useState<any[]>([])
+  const [llmResponses, setLlmResponses] = useState<any[]>([])
+  const [whitelistedEmails, setWhitelistedEmails] = useState<any[]>([])
   const [topCaption, setTopCaption] = useState<any>(null)
   const [avgLikes, setAvgLikes] = useState<number | null>(null)
 
-  const [imagePage, setImagePage] = useState(1)
-  const [profilePage, setProfilePage] = useState(1)
-  const [captionPage, setCaptionPage] = useState(1)
-  const ITEMS_PER_PAGE = 10
+  const profileP = usePage()
+  const imageP = usePage()
+  const captionP = usePage()
+  const captionExP = usePage()
+  const captionReqP = usePage()
+  const humorFlavorP = usePage()
+  const humorFlavorStepP = usePage()
+  const llmModelP = usePage()
+  const llmProviderP = usePage()
+  const llmRespP = usePage()
+  const emailP = usePage()
 
-  const fetchAll = async (currentImagePage: number, currentProfilePage: number, currentCaptionPage: number) => {
-    const imageFrom = (currentImagePage - 1) * ITEMS_PER_PAGE
-    const imageTo = imageFrom + ITEMS_PER_PAGE - 1
-    const profileFrom = (currentProfilePage - 1) * ITEMS_PER_PAGE
-    const profileTo = profileFrom + ITEMS_PER_PAGE - 1
-    const captionFrom = (currentCaptionPage - 1) * ITEMS_PER_PAGE
-    const captionTo = captionFrom + ITEMS_PER_PAGE - 1
+  const [modal, setModal] = useState<{ type: string; data?: any } | null>(null)
+  const [formData, setFormData] = useState<any>({})
 
-    const [profilesRes, imagesRes, captionsRes] = await Promise.all([
-      supabase.from('profiles').select('*').range(profileFrom, profileTo),
-      supabase.from('images').select('*').range(imageFrom, imageTo),
-      supabase.from('captions').select('*, images(url, image_description)').range(captionFrom, captionTo),
-    ])
+  const openModal = (type: string, data?: any) => { setFormData(data ?? {}); setModal({ type, data }) }
+  const closeModal = () => { setModal(null); setFormData({}) }
 
-    if (!profilesRes.error) setProfiles(profilesRes.data)
-    if (!imagesRes.error) setImages(imagesRes.data)
-    if (!captionsRes.error) setCaptions(captionsRes.data)
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (navRef.current && !navRef.current.contains(e.target as Node)) {
+        setOpenGroup(null)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const fetchTable = async (table: string, setter: (d: any[]) => void, page: number, select = '*') => {
+    const from = (page - 1) * ITEMS_PER_PAGE
+    const { data, error } = await supabase.from(table).select(select).range(from, from + ITEMS_PER_PAGE - 1)
+    if (!error && data) setter(data)
+  }
+
+  const fetchCaptionRequests = async (page: number) => {
+    const from = (page - 1) * ITEMS_PER_PAGE
+    // First fetch caption_requests base data
+    const { data, error } = await supabase
+      .from('caption_requests')
+      .select('*')
+      .range(from, from + ITEMS_PER_PAGE - 1)
+
+    if (error || !data) return
+
+    // Then fetch related images separately for each request
+    const enriched = await Promise.all(
+      data.map(async (req) => {
+        if (!req.image_id) return { ...req, image: null }
+        const { data: imgData } = await supabase
+          .from('images')
+          .select('url, image_description')
+          .eq('id', req.image_id)
+          .single()
+        return { ...req, image: imgData ?? null }
+      })
+    )
+    setCaptionRequests(enriched)
   }
 
   const fetchDashboardStats = async () => {
     const { data: topData } = await supabase
-      .from('captions')
-      .select('*, images(url, image_description)')
-      .order('like_count', { ascending: false })
-      .limit(1)
-      .single()
-
+      .from('captions').select('*, images(url, image_description)')
+      .order('like_count', { ascending: false }).limit(1).single()
     if (topData) setTopCaption(topData)
-
     const { data: avgData } = await supabase.from('captions').select('like_count')
-
-    if (avgData && avgData.length > 0) {
-      const total = avgData.reduce((sum: number, c: any) => sum + (c.like_count ?? 0), 0)
+    if (avgData?.length) {
+      const total = avgData.reduce((s: number, c: any) => s + (c.like_count ?? 0), 0)
       setAvgLikes(Math.round(total / avgData.length))
     }
+  }
+
+  const fetchAll = async () => {
+    await Promise.all([
+      fetchTable('profiles', setProfiles, profileP.page),
+      fetchTable('images', setImages, imageP.page),
+      fetchTable('captions', setCaptions, captionP.page, '*, images(url, image_description)'),
+      fetchTable('caption_examples', setCaptionExamples, captionExP.page),
+      fetchCaptionRequests(captionReqP.page),
+      fetchTable('humor_flavors', setHumorFlavors, humorFlavorP.page),
+      fetchTable('humor_flavor_steps', setHumorFlavorSteps, humorFlavorStepP.page),
+      fetchTable('llm_models', setLlmModels, llmModelP.page),
+      fetchTable('llm_providers', setLlmProviders, llmProviderP.page),
+      fetchTable('llm_responses', setLlmResponses, llmRespP.page),
+      fetchTable('whitelisted_emails', setWhitelistedEmails, emailP.page),
+    ])
   }
 
   useEffect(() => {
     const loadUser = async () => {
       const { data: { session } } = await supabase.auth.getSession()
-      const user = session?.user ?? null
-      setUser(user)
-
-      if (user) {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('is_superadmin')
-          .eq('id', user.id)
-          .single()
-
+      const u = session?.user ?? null
+      setUser(u)
+      if (u) {
+        const { data, error } = await supabase.from('profiles').select('is_superadmin').eq('id', u.id).single()
         if (!error) {
           const admin = data?.is_superadmin ?? false
           setIsAdmin(admin)
-          if (admin) {
-            await fetchAll(1, 1, 1)
-            await fetchDashboardStats()
-          }
-        } else {
-          setIsAdmin(false)
-        }
+          if (admin) { await fetchAll(); await fetchDashboardStats() }
+        } else { setIsAdmin(false) }
       }
     }
-
     loadUser()
-
-    const { data: { subscription } } =
-      supabase.auth.onAuthStateChange((_event, session) => {
-        setUser(session?.user ?? null)
-      })
-
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => setUser(session?.user ?? null))
     return () => subscription.unsubscribe()
   }, [])
 
   useEffect(() => {
     if (!isAdmin) return
-    fetchAll(imagePage, profilePage, captionPage)
-  }, [imagePage, profilePage, captionPage])
+    fetchAll()
+  }, [
+    profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
+    humorFlavorP.page, humorFlavorStepP.page, llmModelP.page, llmProviderP.page,
+    llmRespP.page, emailP.page,
+  ])
 
-  const refreshImages = async () => {
-    const from = (imagePage - 1) * ITEMS_PER_PAGE
-    const to = from + ITEMS_PER_PAGE - 1
-    const { data, error } = await supabase.from('images').select('*').range(from, to)
-    if (!error) setImages(data)
+  const handleDelete = async (table: string, id: any, refresh: () => void) => {
+    if (!confirm('Are you sure?')) return
+    const { error } = await supabase.from(table).delete().eq('id', id)
+    if (!error) refresh()
   }
 
-  const updateImage = async (id: string, newUrl: string) => {
-    const { error } = await supabase.from('images').update({ url: newUrl }).eq('id', id)
-    if (!error) refreshImages()
+  const handleSave = async (table: string, fields: string[], refresh: () => void) => {
+    const payload: any = {}
+    fields.forEach(f => { if (formData[f] !== undefined && formData[f] !== '') payload[f] = formData[f] })
+    if (modal?.data?.id) {
+      await supabase.from(table).update(payload).eq('id', modal.data.id)
+    } else {
+      await supabase.from(table).insert(payload)
+    }
+    closeModal()
+    refresh()
   }
 
-  const deleteImage = async (id: string) => {
-    const { error } = await supabase.from('images').delete().eq('id', id)
-    if (!error) refreshImages()
+  const handleImageUpload = async (file: File) => {
+    const ext = file.name.split('.').pop()
+    const fileName = `${crypto.randomUUID()}.${ext}`
+    const { error } = await supabase.storage.from('images').upload(fileName, file)
+    if (error) { alert('Upload failed: ' + error.message); return }
+    return supabase.storage.from('images').getPublicUrl(fileName).data.publicUrl
   }
 
   const loginWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
-        queryParams: { prompt: 'select_account' },
-      },
+      options: { redirectTo: `${window.location.origin}/auth/callback`, queryParams: { prompt: 'select_account' } },
     })
   }
 
   const logout = async () => {
     await supabase.auth.signOut()
-    setUser(null)
-    setIsAdmin(null)
-    setProfiles([])
-    setImages([])
-    setCaptions([])
-    setTopCaption(null)
-    setAvgLikes(null)
+    setUser(null); setIsAdmin(null)
+    setProfiles([]); setImages([]); setCaptions([])
+    setCaptionExamples([]); setCaptionRequests([])
+    setHumorFlavors([]); setHumorFlavorSteps([])
+    setLlmModels([]); setLlmProviders([]); setLlmResponses([])
+    setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null)
   }
+
+  const Pagination = ({ pager, data }: { pager: ReturnType<typeof usePage>; data: any[] }) => (
+    <div className="pagination">
+      <button className="page-btn" disabled={pager.page === 1} onClick={() => pager.setPage(p => Math.max(p - 1, 1))}>&#8592;</button>
+      <span className="page-label">Page {pager.page}</span>
+      <button className="page-btn" disabled={data.length < ITEMS_PER_PAGE} onClick={() => pager.setPage(p => p + 1)}>&#8594;</button>
+    </div>
+  )
+
+  const FormModal = ({ title, fields, table, refresh }: {
+    title: string
+    fields: { key: string; label: string; type?: string }[]
+    table: string
+    refresh: () => void
+  }) => (
+    <div className="modal-overlay" onClick={closeModal}>
+      <div className="modal" onClick={e => e.stopPropagation()}>
+        <h3 className="modal-title">{title}</h3>
+        {fields.map(f => (
+          <div className="modal-field" key={f.key}>
+            <label className="modal-label">{f.label}</label>
+            <input className="modal-input" type={f.type ?? 'text'}
+              value={formData[f.key] ?? ''}
+              onChange={e => setFormData((prev: any) => ({ ...prev, [f.key]: e.target.value }))} />
+          </div>
+        ))}
+        <div className="modal-actions">
+          <button className="btn-secondary" onClick={closeModal}>Cancel</button>
+          <button className="btn-primary" onClick={() => handleSave(table, fields.map(f => f.key), refresh)}>Save</button>
+        </div>
+      </div>
+    </div>
+  )
+
+  const TextCell = ({ value, title }: { value: string | null | undefined; title: string }) => (
+    <td
+      className="td-truncate td-clickable"
+      onClick={() => value && setPreviewText({ title, content: value })}
+      title={value ?? ''}
+    >
+      {value ?? '—'}
+    </td>
+  )
+
+  const ImgCell = ({ url }: { url: string | null | undefined }) => (
+    <td className="td">
+      {url
+        ? <img src={url} alt="" width={80} className="table-img img-clickable" onClick={() => setPreviewImg(url)} />
+        : '—'}
+    </td>
+  )
+
+  const activeGroup: NavGroup =
+    ['profiles', 'whitelisted_emails'].includes(activeTab) ? 'profiles' :
+    ['captions', 'caption_examples', 'caption_requests'].includes(activeTab) ? 'captions' :
+    ['humor_flavors', 'humor_flavor_steps'].includes(activeTab) ? 'humor' :
+    ['llm_models', 'llm_providers', 'llm_responses'].includes(activeTab) ? 'llm' :
+    activeTab as NavGroup
 
   if (!user) {
     return (
@@ -147,20 +309,11 @@ export default function Page() {
             <div className="login-logo-tile">HA</div>
             <div>
               <div className="login-brand-label">Humor Project</div>
-              <h1 className="login-title">
-                Login to Admin Dashboard<br />
-                <span className="login-title-accent">for the Humor Project</span>
-              </h1>
+              <h1 className="login-title">Login to Admin Dashboard<br /><span className="login-title-accent">for the Humor Project</span></h1>
             </div>
           </div>
-
           <div className="login-divider" />
-
-          <p className="login-description">
-            Sign in with your Google account to access the admin panel.
-            Only authorized administrators can proceed.
-          </p>
-
+          <p className="login-description">Sign in with your Google account to access the admin panel. Only authorized administrators can proceed.</p>
           <button onClick={loginWithGoogle} className="login-google-btn">
             <svg width="18" height="18" viewBox="0 0 48 48">
               <path fill="#FFC107" d="M43.6 20H24v8h11.3C33.6 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.8 1.1 7.9 3l5.7-5.7C34.1 6.5 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20c11 0 19.7-8 19.7-20 0-1.3-.1-2.7-.1-4z"/>
@@ -170,16 +323,13 @@ export default function Page() {
             </svg>
             Sign in with Google
           </button>
-
           <p className="login-footer-note">Access is restricted to verified admins only.</p>
         </div>
       </div>
     )
   }
 
-  if (isAdmin === null) {
-    return <p className="loading">Loading...</p>
-  }
+  if (isAdmin === null) return <p className="loading">Loading...</p>
 
   if (isAdmin === false) {
     return (
@@ -189,40 +339,73 @@ export default function Page() {
             <div className="login-logo-tile">HA</div>
             <div>
               <div className="login-brand-label">Humor Project</div>
-              <h1 className="login-title">
-                Access Denied
-              </h1>
+              <h1 className="login-title">Access Denied</h1>
             </div>
           </div>
-
           <div className="login-divider" />
-
-          <p className="login-description">
-            Your account <strong>{user.email}</strong> does not have admin access.
-            Please contact an administrator if you believe this is a mistake.
-          </p>
-
-          <button onClick={logout} className="login-google-btn">
-            Sign Out
-          </button>
-
+          <p className="login-description">Your account <strong>{user.email}</strong> does not have admin access.</p>
+          <button onClick={logout} className="login-google-btn">Sign Out</button>
           <p className="login-footer-note">Access is restricted to verified admins only.</p>
         </div>
       </div>
     )
   }
 
-
-  if (isAdmin === null) {
-    return <p className="loading">Loading...</p>
-  }
-
   const initials = user.email?.slice(0, 1).toUpperCase()
 
   return (
     <div className="wrapper">
+
+      {/* TOAST */}
+      {toast && <div className="toast">{toast}</div>}
+
+      {/* IMAGE PREVIEW MODAL */}
+      {previewImg && (
+        <div className="modal-overlay" onClick={() => setPreviewImg(null)}>
+          <div className="img-preview-modal" onClick={e => e.stopPropagation()}>
+            <button className="preview-close" onClick={() => setPreviewImg(null)}>✕</button>
+            <img src={previewImg} alt="" className="img-preview-full" />
+            <div className="preview-img-actions">
+              <a href={previewImg} target="_blank" rel="noopener noreferrer" className="preview-open-link">
+                Open in new tab ↗
+              </a>
+              <button
+                className="btn-secondary"
+                style={{ fontSize: '12px', padding: '6px 14px' }}
+                onClick={() => {
+                  navigator.clipboard.writeText(previewImg)
+                  showToast('Image URL copied!')
+                }}
+              >
+                Copy URL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TEXT PREVIEW MODAL */}
+      {previewText && (
+        <div className="modal-overlay" onClick={() => setPreviewText(null)}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 className="modal-title">{previewText.title}</h3>
+              <button className="preview-close" style={{ position: 'static' }} onClick={() => setPreviewText(null)}>✕</button>
+            </div>
+            <div className="preview-text-body">{previewText.content}</div>
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={() => {
+                navigator.clipboard.writeText(previewText.content)
+                showToast('Copied to clipboard!')
+              }}>Copy</button>
+              <button className="btn-primary" onClick={() => setPreviewText(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* NAVBAR */}
-      <nav className="nav">
+      <nav className="nav" ref={navRef}>
         <div className="nav-left">
           <div className="nav-logo">HA</div>
           <div>
@@ -231,19 +414,41 @@ export default function Page() {
           </div>
         </div>
 
-        {isAdmin && (
-          <div className="nav-tabs">
-            {(['dashboard', 'profiles', 'images', 'captions'] as Tab[]).map((tab) => (
+        <div className="nav-tabs">
+          {NAV_GROUPS.map(({ group, label, tabs }) =>
+            !tabs ? (
               <button
-                key={tab}
-                className={`tab-btn${activeTab === tab ? ' active' : ''}`}
-                onClick={() => setActiveTab(tab)}
+                key={group}
+                className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
+                onClick={() => { setActiveTab(group as Tab); setOpenGroup(null) }}
               >
-                {tab}
+                {label}
               </button>
-            ))}
-          </div>
-        )}
+            ) : (
+              <div key={group} className="nav-tab-group">
+                <button
+                  className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
+                  onClick={() => setOpenGroup(prev => prev === group ? null : group)}
+                >
+                  {label} {openGroup === group ? '▴' : '▾'}
+                </button>
+                {openGroup === group && (
+                  <div className="dropdown">
+                    {tabs.map(({ tab, label: tabLabel }) => (
+                      <button
+                        key={tab}
+                        className={`dropdown-item${activeTab === tab ? ' active' : ''}`}
+                        onClick={() => { setActiveTab(tab); setOpenGroup(null) }}
+                      >
+                        {tabLabel}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )
+          )}
+        </div>
 
         <div className="nav-right">
           <div className="nav-avatar">{initials}</div>
@@ -255,187 +460,442 @@ export default function Page() {
         </div>
       </nav>
 
-      {/* CONTENT */}
       <div className="content">
-        {!isAdmin ? (
-          <p className="no-permission">You do not have permission to view this content.</p>
-        ) : (
-          <>
-            {/* DASHBOARD TAB */}
-            {activeTab === 'dashboard' && (
-              <div className="dashboard">
-                <h2 className="dashboard-title">Dashboard</h2>
 
-                <div className="stat-cards-row">
-                  <div className="stat-card">
-                    <div className="stat-label">Average Likes / Caption</div>
-                    <div className="stat-value">
-                      {avgLikes !== null ? avgLikes.toLocaleString() : '\u2014'}
+        {/* DASHBOARD */}
+        {activeTab === 'dashboard' && (
+          <div className="dashboard">
+            <h2 className="dashboard-title">Dashboard</h2>
+            <div className="stat-cards-row">
+              <div className="stat-card">
+                <div className="stat-label">Average Likes / Caption</div>
+                <div className="stat-value">{avgLikes !== null ? avgLikes.toLocaleString() : '—'}</div>
+                <div className="stat-sub">Across all captions</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Top Caption Likes</div>
+                <div className="stat-value-accent">{topCaption ? topCaption.like_count?.toLocaleString() : '—'}</div>
+                <div className="stat-sub">Most liked caption</div>
+              </div>
+            </div>
+            {topCaption && (
+              <div className="card">
+                <div className="top-caption-header">Most Liked Image + Caption Pair</div>
+                <div className="top-caption-body">
+                  {topCaption.images?.url && (
+                    <img
+                      src={topCaption.images.url}
+                      alt=""
+                      className="top-caption-img img-clickable"
+                      onClick={() => setPreviewImg(topCaption.images.url)}
+                    />
+                  )}
+                  <div className="top-caption-details">
+                    <div>
+                      <div className="top-caption-field-label">Caption</div>
+                      <div className="top-caption-content">{topCaption.content}</div>
                     </div>
-                    <div className="stat-sub">Across all captions</div>
-                  </div>
-                  <div className="stat-card">
-                    <div className="stat-label">Top Caption Likes</div>
-                    <div className="stat-value-accent">
-                      {topCaption ? topCaption.like_count?.toLocaleString() : '\u2014'}
-                    </div>
-                    <div className="stat-sub">Most liked caption</div>
-                  </div>
-                </div>
-
-                {topCaption && (
-                  <div className="card">
-                    <div className="top-caption-header">
-                      Most Liked Image + Caption Pair
-                    </div>
-                    <div className="top-caption-body">
-                      {topCaption.images?.url && (
-                        <img src={topCaption.images.url} alt="" className="top-caption-img" />
-                      )}
-                      <div className="top-caption-details">
-                        <div>
-                          <div className="top-caption-field-label">Caption</div>
-                          <div className="top-caption-content">{topCaption.content}</div>
-                        </div>
-                        {topCaption.images?.image_description && (
-                          <div>
-                            <div className="top-caption-field-label">Image Description</div>
-                            <div className="top-caption-desc">{topCaption.images.image_description}</div>
-                          </div>
-                        )}
-                        <div className="top-caption-badges">
-                          <span className={topCaption.is_public ? 'badge-public' : 'badge-private'}>
-                            {topCaption.is_public ? 'Public' : 'Private'}
-                          </span>
-                          <span className="badge-likes">{topCaption.like_count} likes</span>
-                        </div>
+                    {topCaption.images?.image_description && (
+                      <div>
+                        <div className="top-caption-field-label">Image Description</div>
+                        <div className="top-caption-desc">{topCaption.images.image_description}</div>
                       </div>
+                    )}
+                    <div className="top-caption-badges">
+                      <span className={topCaption.is_public ? 'badge-public' : 'badge-private'}>
+                        {topCaption.is_public ? 'Public' : 'Private'}
+                      </span>
+                      <span className="badge-likes">{topCaption.like_count} likes</span>
                     </div>
                   </div>
-                )}
+                </div>
               </div>
             )}
+          </div>
+        )}
 
-            {/* PROFILES TAB */}
-            {activeTab === 'profiles' && (
-              <div className="card">
-                <h2 className="section-title">Profiles</h2>
-                <div className="table-wrapper">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {['ID', 'First Name', 'Last Name', 'Email', 'Superadmin', 'In Study', 'Matrix Admin', 'Created', 'Modified'].map(h => (
-                          <th key={h} className="th">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {profiles.map((profile) => (
-                        <tr key={profile.id}>
-                          <td className="td">{profile.id}</td>
-                          <td className="td">{profile.first_name}</td>
-                          <td className="td">{profile.last_name}</td>
-                          <td className="td">{profile.email}</td>
-                          <td className="td">{profile.is_superadmin ? 'Yes' : 'No'}</td>
-                          <td className="td">{profile.is_in_study ? 'Yes' : 'No'}</td>
-                          <td className="td">{profile.is_matrix_admin ? 'Yes' : 'No'}</td>
-                          <td className="td">{new Date(profile.created_datetime_utc).toLocaleString()}</td>
-                          <td className="td">{new Date(profile.modified_datetime_utc).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="pagination">
-                  <button className="page-btn" disabled={profilePage === 1} onClick={() => setProfilePage(p => Math.max(p - 1, 1))}>&#8592;</button>
-                  <span className="page-label">Page {profilePage}</span>
-                  <button className="page-btn" disabled={profiles.length < ITEMS_PER_PAGE} onClick={() => setProfilePage(p => p + 1)}>&#8594;</button>
-                </div>
-              </div>
-            )}
+        {/* PROFILES */}
+        {activeTab === 'profiles' && (
+          <div className="card">
+            <h2 className="section-title">Profiles</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'First Name', 'Last Name', 'Email', 'Superadmin', 'In Study', 'Matrix Admin', 'Created'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {profiles.map(p => (
+                    <tr key={p.id}>
+                      <TextCell value={p.id} title="Profile ID" />
+                      <td className="td">{p.first_name}</td>
+                      <td className="td">{p.last_name}</td>
+                      <td className="td">{p.email}</td>
+                      <td className="td">{p.is_superadmin ? 'Yes' : 'No'}</td>
+                      <td className="td">{p.is_in_study ? 'Yes' : 'No'}</td>
+                      <td className="td">{p.is_matrix_admin ? 'Yes' : 'No'}</td>
+                      <td className="td">{new Date(p.created_datetime_utc).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={profileP} data={profiles} />
+          </div>
+        )}
 
-            {/* IMAGES TAB */}
-            {activeTab === 'images' && (
-              <div className="card">
-                <h2 className="section-title">Images</h2>
-                <div className="table-wrapper">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {['ID', 'Preview', 'URL', 'Actions'].map(h => (
-                          <th key={h} className="th">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {images.map((img) => (
-                        <tr key={img.id}>
-                          <td className="td">{img.id}</td>
-                          <td className="td"><img src={img.url} alt="" width={80} className="table-img" /></td>
-                          <td className="td">{img.url}</td>
-                          <td className="td">
-                            <button className="btn-delete" onClick={() => deleteImage(img.id)}>Delete</button>
-                            <button className="btn-edit" onClick={() => updateImage(img.id, prompt('New URL?') || img.url)}>Edit</button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="pagination">
-                  <button className="page-btn" disabled={imagePage === 1} onClick={() => setImagePage(p => Math.max(p - 1, 1))}>&#8592;</button>
-                  <span className="page-label">Page {imagePage}</span>
-                  <button className="page-btn" disabled={images.length < ITEMS_PER_PAGE} onClick={() => setImagePage(p => p + 1)}>&#8594;</button>
-                </div>
-              </div>
-            )}
+        {/* WHITELISTED EMAILS */}
+        {activeTab === 'whitelisted_emails' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Whitelisted Emails</h2>
+              <button className="btn-add" onClick={() => openModal('whitelisted_emails')}>+ Add</button>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Email', 'Created', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {whitelistedEmails.map(e => (
+                    <tr key={e.id}>
+                      <td className="td">{e.id}</td>
+                      <TextCell value={e.email} title="Email Address" />
+                      <td className="td">{new Date(e.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('whitelisted_emails', e)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('whitelisted_emails', e.id, () => fetchTable('whitelisted_emails', setWhitelistedEmails, emailP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={emailP} data={whitelistedEmails} />
+          </div>
+        )}
 
-            {/* CAPTIONS TAB */}
-            {activeTab === 'captions' && (
-              <div className="card">
-                <h2 className="section-title">Captions</h2>
-                <div className="table-wrapper">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        {['ID', 'Image', 'Image Description', 'Caption', 'Visibility', 'Likes', 'Created'].map(h => (
-                          <th key={h} className="th">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {captions.map((caption) => (
-                        <tr key={caption.id}>
-                          <td className="td">{caption.id}</td>
-                          <td className="td">
-                            {caption.images?.url
-                              ? <img src={caption.images.url} alt="" width={80} className="table-img" />
-                              : '\u2014'}
-                          </td>
-                          <td className="td-truncate">{caption.images?.image_description ?? '\u2014'}</td>
-                          <td className="td-truncate">{caption.content}</td>
-                          <td className="td">
-                            <span className={caption.is_public ? 'visibility-public' : 'visibility-private'}>
-                              {caption.is_public ? 'Public' : 'Private'}
-                            </span>
-                          </td>
-                          <td className="td">{caption.like_count}</td>
-                          <td className="td">{new Date(caption.created_datetime_utc).toLocaleString()}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="pagination">
-                  <button className="page-btn" disabled={captionPage === 1} onClick={() => setCaptionPage(p => Math.max(p - 1, 1))}>&#8592;</button>
-                  <span className="page-label">Page {captionPage}</span>
-                  <button className="page-btn" disabled={captions.length < ITEMS_PER_PAGE} onClick={() => setCaptionPage(p => p + 1)}>&#8594;</button>
-                </div>
-              </div>
-            )}
-          </>
+        {/* IMAGES */}
+        {activeTab === 'images' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Images</h2>
+              <button className="btn-add" onClick={() => openModal('image_new')}>+ Add Image</button>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['Preview', 'ID', 'URL', 'Public', 'Description', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {images.map(img => (
+                    <tr key={img.id}>
+                      <ImgCell url={img.url} />
+                      <TextCell value={img.id} title="Image ID" />
+                      <TextCell value={img.url} title="Image URL" />
+                      <td className="td">{img.is_public ? 'Yes' : 'No'}</td>
+                      <TextCell value={img.image_description} title="Image Description" />
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('image_edit', img)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('images', img.id, () => fetchTable('images', setImages, imageP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={imageP} data={images} />
+          </div>
+        )}
+
+        {/* CAPTIONS */}
+        {activeTab === 'captions' && (
+          <div className="card">
+            <h2 className="section-title">Captions</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Image', 'Caption', 'Public', 'Featured', 'Likes', 'Created'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {captions.map(c => (
+                    <tr key={c.id}>
+                      <TextCell value={c.id} title="Caption ID" />
+                      <ImgCell url={c.images?.url} />
+                      <TextCell value={c.content} title="Caption" />
+                      <td className="td"><span className={c.is_public ? 'visibility-public' : 'visibility-private'}>{c.is_public ? 'Public' : 'Private'}</span></td>
+                      <td className="td">{c.is_featured ? 'Yes' : 'No'}</td>
+                      <td className="td">{c.like_count}</td>
+                      <td className="td">{new Date(c.created_datetime_utc).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={captionP} data={captions} />
+          </div>
+        )}
+
+        {/* CAPTION EXAMPLES */}
+        {activeTab === 'caption_examples' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Caption Examples</h2>
+              <button className="btn-add" onClick={() => openModal('caption_examples')}>+ Add</button>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Caption', 'Explanation', 'Priority', 'Image Desc', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {captionExamples.map(ex => (
+                    <tr key={ex.id}>
+                      <td className="td">{ex.id}</td>
+                      <TextCell value={ex.caption} title="Caption" />
+                      <TextCell value={ex.explanation} title="Explanation" />
+                      <td className="td">{ex.priority}</td>
+                      <TextCell value={ex.image_description} title="Image Description" />
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('caption_examples', ex)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('caption_examples', ex.id, () => fetchTable('caption_examples', setCaptionExamples, captionExP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={captionExP} data={captionExamples} />
+          </div>
+        )}
+
+        {/* CAPTION REQUESTS */}
+        {activeTab === 'caption_requests' && (
+          <div className="card">
+            <h2 className="section-title">Caption Requests</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    {['ID', 'Image', 'Image Desc', 'Profile ID', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => (
+                      <th key={h} className="th">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {captionRequests.map(r => (
+                    <tr key={r.id}>
+                      <td className="td">{r.id}</td>
+                      <ImgCell url={r.image?.url} />
+                      <TextCell value={r.image?.image_description} title="Image Description" />
+                      <TextCell value={r.profile_id} title="Profile ID" />
+                      <TextCell value={r.created_by_user_id} title="Created By User ID" />
+                      <TextCell value={r.modified_by_user_id} title="Modified By User ID" />
+                      <td className="td">{r.created_datetime_utc ? new Date(r.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{r.modified_datetime_utc ? new Date(r.modified_datetime_utc).toLocaleString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={captionReqP} data={captionRequests} />
+          </div>
+        )}
+
+        {/* HUMOR FLAVORS */}
+        {activeTab === 'humor_flavors' && (
+          <div className="card">
+            <h2 className="section-title">Humor Flavors</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Slug', 'Description', 'Created'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {humorFlavors.map(hf => (
+                    <tr key={hf.id}>
+                      <td className="td">{hf.id}</td>
+                      <td className="td">{hf.slug}</td>
+                      <TextCell value={hf.description} title="Description" />
+                      <td className="td">{new Date(hf.created_datetime_utc).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={humorFlavorP} data={humorFlavors} />
+          </div>
+        )}
+
+        {/* HUMOR FLAVOR STEPS */}
+        {activeTab === 'humor_flavor_steps' && (
+          <div className="card">
+            <h2 className="section-title">Humor Flavor Steps</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Flavor ID', 'Order', 'LLM Model', 'System Prompt', 'User Prompt', 'Description'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {humorFlavorSteps.map(s => (
+                    <tr key={s.id}>
+                      <td className="td">{s.id}</td>
+                      <td className="td">{s.humor_flavor_id}</td>
+                      <td className="td">{s.order_by}</td>
+                      <td className="td">{s.llm_model_id}</td>
+                      <TextCell value={s.llm_system_prompt} title="System Prompt" />
+                      <TextCell value={s.llm_user_prompt} title="User Prompt" />
+                      <TextCell value={s.description} title="Description" />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={humorFlavorStepP} data={humorFlavorSteps} />
+          </div>
+        )}
+
+        {/* LLM MODELS */}
+        {activeTab === 'llm_models' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>LLM Models</h2>
+              <button className="btn-add" onClick={() => openModal('llm_models')}>+ Add</button>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Name', 'Provider ID', 'Created', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {llmModels.map(m => (
+                    <tr key={m.id}>
+                      <td className="td">{m.id}</td>
+                      <td className="td">{m.name}</td>
+                      <td className="td">{m.llm_provider_id ?? '—'}</td>
+                      <td className="td">{new Date(m.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('llm_models', m)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('llm_models', m.id, () => fetchTable('llm_models', setLlmModels, llmModelP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={llmModelP} data={llmModels} />
+          </div>
+        )}
+
+        {/* LLM PROVIDERS */}
+        {activeTab === 'llm_providers' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>LLM Providers</h2>
+              <button className="btn-add" onClick={() => openModal('llm_providers')}>+ Add</button>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Name', 'Created', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {llmProviders.map(p => (
+                    <tr key={p.id}>
+                      <td className="td">{p.id}</td>
+                      <td className="td">{p.name}</td>
+                      <td className="td">{new Date(p.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('llm_providers', p)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('llm_providers', p.id, () => fetchTable('llm_providers', setLlmProviders, llmProviderP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={llmProviderP} data={llmProviders} />
+          </div>
+        )}
+
+        {/* LLM RESPONSES */}
+        {activeTab === 'llm_responses' && (
+          <div className="card">
+            <h2 className="section-title">LLM Responses</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead><tr>{['ID', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {llmResponses.map(r => (
+                    <tr key={r.id}>
+                      <td className="td">{r.id}</td>
+                      <td className="td">{new Date(r.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">{new Date(r.modified_datetime_utc).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={llmRespP} data={llmResponses} />
+          </div>
         )}
       </div>
+
+      {/* CRUD MODALS */}
+      {modal?.type === 'image_new' && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal" onClick={e => e.stopPropagation()}>
+            <h3 className="modal-title">Add Image</h3>
+            <div className="modal-field">
+              <label className="modal-label">Upload File</label>
+              <input className="modal-input" type="file" accept="image/*"
+                onChange={async e => {
+                  const file = e.target.files?.[0]
+                  if (!file) return
+                  const url = await handleImageUpload(file)
+                  if (url) setFormData((prev: any) => ({ ...prev, url }))
+                }} />
+            </div>
+            <div className="modal-field">
+              <label className="modal-label">Or Paste URL</label>
+              <input className="modal-input" type="text" value={formData.url ?? ''}
+                onChange={e => setFormData((prev: any) => ({ ...prev, url: e.target.value }))} />
+            </div>
+            <div className="modal-field">
+              <label className="modal-label">Image Description</label>
+              <input className="modal-input" type="text" value={formData.image_description ?? ''}
+                onChange={e => setFormData((prev: any) => ({ ...prev, image_description: e.target.value }))} />
+            </div>
+            <div className="modal-actions">
+              <button className="btn-secondary" onClick={closeModal}>Cancel</button>
+              <button className="btn-primary" onClick={() => handleSave('images', ['url', 'image_description'], () => fetchTable('images', setImages, imageP.page))}>Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modal?.type === 'image_edit' && (
+        <FormModal title="Edit Image" table="images"
+          fields={[
+            { key: 'url', label: 'URL' },
+            { key: 'image_description', label: 'Image Description' },
+            { key: 'additional_context', label: 'Additional Context' },
+          ]}
+          refresh={() => fetchTable('images', setImages, imageP.page)} />
+      )}
+
+      {modal?.type === 'caption_examples' && (
+        <FormModal title={modal.data?.id ? 'Edit Caption Example' : 'Add Caption Example'} table="caption_examples"
+          fields={[
+            { key: 'caption', label: 'Caption' },
+            { key: 'explanation', label: 'Explanation' },
+            { key: 'image_description', label: 'Image Description' },
+            { key: 'priority', label: 'Priority', type: 'number' },
+          ]}
+          refresh={() => fetchTable('caption_examples', setCaptionExamples, captionExP.page)} />
+      )}
+
+      {modal?.type === 'llm_models' && (
+        <FormModal title={modal.data?.id ? 'Edit LLM Model' : 'Add LLM Model'} table="llm_models"
+          fields={[
+            { key: 'name', label: 'Name' },
+            { key: 'llm_provider_id', label: 'Provider ID', type: 'number' },
+          ]}
+          refresh={() => fetchTable('llm_models', setLlmModels, llmModelP.page)} />
+      )}
+
+      {modal?.type === 'llm_providers' && (
+        <FormModal title={modal.data?.id ? 'Edit LLM Provider' : 'Add LLM Provider'} table="llm_providers"
+          fields={[{ key: 'name', label: 'Name' }]}
+          refresh={() => fetchTable('llm_providers', setLlmProviders, llmProviderP.page)} />
+      )}
+
+      {modal?.type === 'whitelisted_emails' && (
+        <FormModal title={modal.data?.id ? 'Edit Email' : 'Add Email'} table="whitelisted_emails"
+          fields={[{ key: 'email', label: 'Email Address', type: 'email' }]}
+          refresh={() => fetchTable('whitelisted_emails', setWhitelistedEmails, emailP.page)} />
+      )}
     </div>
   )
 }
