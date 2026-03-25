@@ -10,8 +10,8 @@ type Tab =
   | 'profiles' | 'whitelisted_emails'
   | 'images'
   | 'captions' | 'caption_examples' | 'caption_requests'
-  | 'humor_flavors' | 'humor_flavor_steps'
-  | 'llm_models' | 'llm_providers' | 'llm_responses'
+  | 'humor_flavors' | 'humor_flavor_steps' | 'humor_flavor_mix'
+  | 'llm_models' | 'llm_providers' | 'llm_responses' | 'llm_prompt_chains'
 
 const ITEMS_PER_PAGE = 10
 
@@ -38,6 +38,7 @@ const NAV_GROUPS: { group: NavGroup; label: string; tabs?: { tab: Tab; label: st
     tabs: [
       { tab: 'humor_flavors', label: 'Humor Flavors' },
       { tab: 'humor_flavor_steps', label: 'Flavor Steps' },
+      { tab: 'humor_flavor_mix', label: 'Flavor Mix' },
     ],
   },
   {
@@ -46,6 +47,7 @@ const NAV_GROUPS: { group: NavGroup; label: string; tabs?: { tab: Tab; label: st
       { tab: 'llm_models', label: 'LLM Models' },
       { tab: 'llm_providers', label: 'LLM Providers' },
       { tab: 'llm_responses', label: 'LLM Responses' },
+      { tab: 'llm_prompt_chains', label: 'Prompt Chains' },
     ],
   },
 ]
@@ -78,9 +80,11 @@ export default function Page() {
   const [captionRequests, setCaptionRequests] = useState<any[]>([])
   const [humorFlavors, setHumorFlavors] = useState<any[]>([])
   const [humorFlavorSteps, setHumorFlavorSteps] = useState<any[]>([])
+  const [humorFlavorMix, setHumorFlavorMix] = useState<any[]>([])
   const [llmModels, setLlmModels] = useState<any[]>([])
   const [llmProviders, setLlmProviders] = useState<any[]>([])
   const [llmResponses, setLlmResponses] = useState<any[]>([])
+  const [llmPromptChains, setLlmPromptChains] = useState<any[]>([])
   const [whitelistedEmails, setWhitelistedEmails] = useState<any[]>([])
   const [topCaption, setTopCaption] = useState<any>(null)
   const [avgLikes, setAvgLikes] = useState<number | null>(null)
@@ -92,9 +96,11 @@ export default function Page() {
   const captionReqP = usePage()
   const humorFlavorP = usePage()
   const humorFlavorStepP = usePage()
+  const humorFlavorMixP = usePage()
   const llmModelP = usePage()
   const llmProviderP = usePage()
   const llmRespP = usePage()
+  const llmChainP = usePage()
   const emailP = usePage()
 
   const [modal, setModal] = useState<{ type: string; data?: any } | null>(null)
@@ -121,7 +127,6 @@ export default function Page() {
 
   const fetchCaptionRequests = async (page: number) => {
     const from = (page - 1) * ITEMS_PER_PAGE
-    // First fetch caption_requests base data
     const { data, error } = await supabase
       .from('caption_requests')
       .select('*')
@@ -129,7 +134,6 @@ export default function Page() {
 
     if (error || !data) return
 
-    // Then fetch related images separately for each request
     const enriched = await Promise.all(
       data.map(async (req) => {
         if (!req.image_id) return { ...req, image: null }
@@ -165,10 +169,12 @@ export default function Page() {
       fetchCaptionRequests(captionReqP.page),
       fetchTable('humor_flavors', setHumorFlavors, humorFlavorP.page),
       fetchTable('humor_flavor_steps', setHumorFlavorSteps, humorFlavorStepP.page),
+      fetchTable('humor_flavor_mix', setHumorFlavorMix, humorFlavorMixP.page),
       fetchTable('llm_models', setLlmModels, llmModelP.page),
       fetchTable('llm_providers', setLlmProviders, llmProviderP.page),
-      fetchTable('llm_responses', setLlmResponses, llmRespP.page),
-      fetchTable('whitelisted_emails', setWhitelistedEmails, emailP.page),
+      fetchTable('llm_model_responses', setLlmResponses, llmRespP.page),
+      fetchTable('llm_prompt_chains', setLlmPromptChains, llmChainP.page),
+      fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page),
     ])
   }
 
@@ -196,8 +202,8 @@ export default function Page() {
     fetchAll()
   }, [
     profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
-    humorFlavorP.page, humorFlavorStepP.page, llmModelP.page, llmProviderP.page,
-    llmRespP.page, emailP.page,
+    humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
+    llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
   ])
 
   const handleDelete = async (table: string, id: any, refresh: () => void) => {
@@ -238,8 +244,9 @@ export default function Page() {
     setUser(null); setIsAdmin(null)
     setProfiles([]); setImages([]); setCaptions([])
     setCaptionExamples([]); setCaptionRequests([])
-    setHumorFlavors([]); setHumorFlavorSteps([])
+    setHumorFlavors([]); setHumorFlavorSteps([]); setHumorFlavorMix([])
     setLlmModels([]); setLlmProviders([]); setLlmResponses([])
+    setLlmPromptChains([])
     setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null)
   }
 
@@ -297,8 +304,8 @@ export default function Page() {
   const activeGroup: NavGroup =
     ['profiles', 'whitelisted_emails'].includes(activeTab) ? 'profiles' :
     ['captions', 'caption_examples', 'caption_requests'].includes(activeTab) ? 'captions' :
-    ['humor_flavors', 'humor_flavor_steps'].includes(activeTab) ? 'humor' :
-    ['llm_models', 'llm_providers', 'llm_responses'].includes(activeTab) ? 'llm' :
+    ['humor_flavors', 'humor_flavor_steps', 'humor_flavor_mix'].includes(activeTab) ? 'humor' :
+    ['llm_models', 'llm_providers', 'llm_responses', 'llm_prompt_chains'].includes(activeTab) ? 'llm' :
     activeTab as NavGroup
 
   if (!user) {
@@ -550,16 +557,19 @@ export default function Page() {
             </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Email', 'Created', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Email', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {whitelistedEmails.map(e => (
                     <tr key={e.id}>
                       <td className="td">{e.id}</td>
-                      <TextCell value={e.email} title="Email Address" />
-                      <td className="td">{new Date(e.created_datetime_utc).toLocaleString()}</td>
+                      <TextCell value={e.email_address} title="Email Address" />
+                      <TextCell value={e.created_by_user_id} title="Created By User ID" />
+                      <TextCell value={e.modified_by_user_id} title="Modified By User ID" />
+                      <td className="td">{e.created_datetime_utc ? new Date(e.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{e.modified_datetime_utc ? new Date(e.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('whitelisted_emails', e)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('whitelisted_emails', e.id, () => fetchTable('whitelisted_emails', setWhitelistedEmails, emailP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('whitelist_email_addresses', e.id, () => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -740,6 +750,45 @@ export default function Page() {
           </div>
         )}
 
+        {/* HUMOR FLAVOR MIX */}
+        {activeTab === 'humor_flavor_mix' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Humor Flavor Mix</h2>
+              <button className="btn-add" onClick={() => openModal('humor_flavor_mix')}>+ Add</button>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    {['ID', 'Humor Flavor ID', 'Caption Count', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => (
+                      <th key={h} className="th">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {humorFlavorMix.map(m => (
+                    <tr key={m.id}>
+                      <td className="td">{m.id}</td>
+                      <td className="td">{m.humor_flavor_id ?? '—'}</td>
+                      <td className="td">{m.caption_count ?? '—'}</td>
+                      <TextCell value={m.created_by_user_id} title="Created By User ID" />
+                      <TextCell value={m.modified_by_user_id} title="Modified By User ID" />
+                      <td className="td">{m.created_datetime_utc ? new Date(m.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{m.modified_datetime_utc ? new Date(m.modified_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('humor_flavor_mix', m)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('humor_flavor_mix', m.id, () => fetchTable('humor_flavor_mix', setHumorFlavorMix, humorFlavorMixP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={humorFlavorMixP} data={humorFlavorMix} />
+          </div>
+        )}
+
         {/* LLM MODELS */}
         {activeTab === 'llm_models' && (
           <div className="card">
@@ -802,16 +851,31 @@ export default function Page() {
         {/* LLM RESPONSES */}
         {activeTab === 'llm_responses' && (
           <div className="card">
-            <h2 className="section-title">LLM Responses</h2>
+            <h2 className="section-title">LLM Model Responses</h2>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead>
+                  <tr>
+                    {['ID', 'Response', 'Model ID', 'Processing (s)', 'System Prompt', 'User Prompt', 'Temperature', 'Humor Flavor', 'Profile ID', 'Caption Request', 'Prompt Chain', 'Created'].map(h => (
+                      <th key={h} className="th">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
                 <tbody>
                   {llmResponses.map(r => (
                     <tr key={r.id}>
-                      <td className="td">{r.id}</td>
-                      <td className="td">{new Date(r.created_datetime_utc).toLocaleString()}</td>
-                      <td className="td">{new Date(r.modified_datetime_utc).toLocaleString()}</td>
+                      <TextCell value={r.id} title="Response ID" />
+                      <TextCell value={r.llm_model_response} title="LLM Response" />
+                      <td className="td">{r.llm_model_id ?? '—'}</td>
+                      <td className="td">{r.processing_time_seconds ?? '—'}</td>
+                      <TextCell value={r.llm_system_prompt} title="System Prompt" />
+                      <TextCell value={r.llm_user_prompt} title="User Prompt" />
+                      <td className="td">{r.llm_temperature ?? '—'}</td>
+                      <td className="td">{r.humor_flavor_id ?? '—'}</td>
+                      <TextCell value={r.profile_id} title="Profile ID" />
+                      <td className="td">{r.caption_request_id ?? '—'}</td>
+                      <td className="td">{r.llm_prompt_chain_id ?? '—'}</td>
+                      <td className="td">{r.created_datetime_utc ? new Date(r.created_datetime_utc).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -820,6 +884,38 @@ export default function Page() {
             <Pagination pager={llmRespP} data={llmResponses} />
           </div>
         )}
+
+        {/* LLM PROMPT CHAINS */}
+        {activeTab === 'llm_prompt_chains' && (
+          <div className="card">
+            <h2 className="section-title">LLM Prompt Chains</h2>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>
+                    {['ID', 'Caption Request ID', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => (
+                      <th key={h} className="th">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {llmPromptChains.map(c => (
+                    <tr key={c.id}>
+                      <td className="td">{c.id}</td>
+                      <td className="td">{c.caption_request_id ?? '—'}</td>
+                      <TextCell value={c.created_by_user_id} title="Created By User ID" />
+                      <TextCell value={c.modified_by_user_id} title="Modified By User ID" />
+                      <td className="td">{c.created_datetime_utc ? new Date(c.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{c.modified_datetime_utc ? new Date(c.modified_datetime_utc).toLocaleString() : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={llmChainP} data={llmPromptChains} />
+          </div>
+        )}
+
       </div>
 
       {/* CRUD MODALS */}
@@ -892,9 +988,18 @@ export default function Page() {
       )}
 
       {modal?.type === 'whitelisted_emails' && (
-        <FormModal title={modal.data?.id ? 'Edit Email' : 'Add Email'} table="whitelisted_emails"
-          fields={[{ key: 'email', label: 'Email Address', type: 'email' }]}
-          refresh={() => fetchTable('whitelisted_emails', setWhitelistedEmails, emailP.page)} />
+        <FormModal title={modal.data?.id ? 'Edit Email' : 'Add Email'} table="whitelist_email_addresses"
+          fields={[{ key: 'email_address', label: 'Email Address', type: 'email' }]}
+          refresh={() => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page)} />
+      )}
+
+      {modal?.type === 'humor_flavor_mix' && (
+        <FormModal title={modal.data?.id ? 'Edit Humor Flavor Mix' : 'Add Humor Flavor Mix'} table="humor_flavor_mix"
+          fields={[
+            { key: 'humor_flavor_id', label: 'Humor Flavor ID', type: 'number' },
+            { key: 'caption_count', label: 'Caption Count', type: 'number' },
+          ]}
+          refresh={() => fetchTable('humor_flavor_mix', setHumorFlavorMix, humorFlavorMixP.page)} />
       )}
     </div>
   )
