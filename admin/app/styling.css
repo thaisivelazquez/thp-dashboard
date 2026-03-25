@@ -807,3 +807,10 @@
   .th, .td, .td-truncate { padding: 8px 10px; font-size: 12px; }
   .td-truncate { max-width: 120px; }
 }
+.toast-success {
+  background: #1a7f4b;
+}
+
+.toast-error {
+  background: #b91c1c;
+}

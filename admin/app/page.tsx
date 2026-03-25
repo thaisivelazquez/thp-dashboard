@@ -60,17 +60,27 @@ function usePage() {
 export default function Page() {
   const [user, setUser] = useState<any>(null)
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
-  const [activeTab, setActiveTab] = useState<Tab>('dashboard')
+  const [activeTab, setActiveTab] = useState<Tab>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('adminActiveTab') as Tab) ?? 'dashboard'
+    }
+    return 'dashboard'
+  })
   const [openGroup, setOpenGroup] = useState<NavGroup | null>(null)
   const navRef = useRef<HTMLDivElement>(null)
 
   const [previewImg, setPreviewImg] = useState<string | null>(null)
   const [previewText, setPreviewText] = useState<{ title: string; content: string } | null>(null)
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
 
-  const showToast = (msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(null), 2000)
+  const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 3000)
+  }
+
+  const changeTab = (tab: Tab) => {
+    localStorage.setItem('adminActiveTab', tab)
+    setActiveTab(tab)
   }
 
   const [profiles, setProfiles] = useState<any[]>([])
@@ -125,15 +135,22 @@ export default function Page() {
     if (!error && data) setter(data)
   }
 
+  const fetchHumorFlavorMix = async (page: number) => {
+    const from = (page - 1) * ITEMS_PER_PAGE
+    const { data, error } = await supabase
+      .from('humor_flavor_mix')
+      .select('*, humor_flavors(slug, description)')
+      .range(from, from + ITEMS_PER_PAGE - 1)
+    if (!error && data) setHumorFlavorMix(data)
+  }
+
   const fetchCaptionRequests = async (page: number) => {
     const from = (page - 1) * ITEMS_PER_PAGE
     const { data, error } = await supabase
       .from('caption_requests')
       .select('*')
       .range(from, from + ITEMS_PER_PAGE - 1)
-
     if (error || !data) return
-
     const enriched = await Promise.all(
       data.map(async (req) => {
         if (!req.image_id) return { ...req, image: null }
@@ -169,7 +186,7 @@ export default function Page() {
       fetchCaptionRequests(captionReqP.page),
       fetchTable('humor_flavors', setHumorFlavors, humorFlavorP.page),
       fetchTable('humor_flavor_steps', setHumorFlavorSteps, humorFlavorStepP.page),
-      fetchTable('humor_flavor_mix', setHumorFlavorMix, humorFlavorMixP.page),
+      fetchHumorFlavorMix(humorFlavorMixP.page),
       fetchTable('llm_models', setLlmModels, llmModelP.page),
       fetchTable('llm_providers', setLlmProviders, llmProviderP.page),
       fetchTable('llm_model_responses', setLlmResponses, llmRespP.page),
@@ -206,29 +223,43 @@ export default function Page() {
     llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
   ])
 
-  const handleDelete = async (table: string, id: any, refresh: () => void) => {
-    if (!confirm('Are you sure?')) return
+  const handleDelete = async (table: string, id: any, label: string, refresh: () => void) => {
+    if (!confirm(`Are you sure you want to delete this ${label}?`)) return
     const { error } = await supabase.from(table).delete().eq('id', id)
-    if (!error) refresh()
+    if (error) {
+      showToast(`❌ Delete failed: ${error.message}`, 'error')
+    } else {
+      showToast(`✅ ${label} deleted successfully`, 'success')
+      refresh()
+    }
   }
 
   const handleSave = async (table: string, fields: string[], refresh: () => void) => {
     const payload: any = {}
     fields.forEach(f => { if (formData[f] !== undefined && formData[f] !== '') payload[f] = formData[f] })
+    let error: any = null
     if (modal?.data?.id) {
-      await supabase.from(table).update(payload).eq('id', modal.data.id)
+      const res = await supabase.from(table).update(payload).eq('id', modal.data.id)
+      error = res.error
     } else {
-      await supabase.from(table).insert(payload)
+      const res = await supabase.from(table).insert(payload)
+      error = res.error
     }
-    closeModal()
-    refresh()
+    if (error) {
+      showToast(`❌ Save failed: ${error.message}`, 'error')
+    } else {
+      showToast(`✅ Saved successfully`, 'success')
+      closeModal()
+      refresh()
+    }
   }
 
   const handleImageUpload = async (file: File) => {
     const ext = file.name.split('.').pop()
     const fileName = `${crypto.randomUUID()}.${ext}`
     const { error } = await supabase.storage.from('images').upload(fileName, file)
-    if (error) { alert('Upload failed: ' + error.message); return }
+    if (error) { showToast(`❌ Upload failed: ${error.message}`, 'error'); return }
+    showToast('✅ Image uploaded!', 'success')
     return supabase.storage.from('images').getPublicUrl(fileName).data.publicUrl
   }
 
@@ -363,10 +394,12 @@ export default function Page() {
   return (
     <div className="wrapper">
 
-      {/* TOAST */}
-      {toast && <div className="toast">{toast}</div>}
+      {toast && (
+        <div className={`toast ${toast.type === 'success' ? 'toast-success' : toast.type === 'error' ? 'toast-error' : ''}`}>
+          {toast.msg}
+        </div>
+      )}
 
-      {/* IMAGE PREVIEW MODAL */}
       {previewImg && (
         <div className="modal-overlay" onClick={() => setPreviewImg(null)}>
           <div className="img-preview-modal" onClick={e => e.stopPropagation()}>
@@ -381,7 +414,7 @@ export default function Page() {
                 style={{ fontSize: '12px', padding: '6px 14px' }}
                 onClick={() => {
                   navigator.clipboard.writeText(previewImg)
-                  showToast('Image URL copied!')
+                  showToast('Image URL copied!', 'success')
                 }}
               >
                 Copy URL
@@ -391,7 +424,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* TEXT PREVIEW MODAL */}
       {previewText && (
         <div className="modal-overlay" onClick={() => setPreviewText(null)}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -403,7 +435,7 @@ export default function Page() {
             <div className="modal-actions">
               <button className="btn-secondary" onClick={() => {
                 navigator.clipboard.writeText(previewText.content)
-                showToast('Copied to clipboard!')
+                showToast('Copied to clipboard!', 'success')
               }}>Copy</button>
               <button className="btn-primary" onClick={() => setPreviewText(null)}>Close</button>
             </div>
@@ -411,7 +443,6 @@ export default function Page() {
         </div>
       )}
 
-      {/* NAVBAR */}
       <nav className="nav" ref={navRef}>
         <div className="nav-left">
           <div className="nav-logo">HA</div>
@@ -427,7 +458,7 @@ export default function Page() {
               <button
                 key={group}
                 className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
-                onClick={() => { setActiveTab(group as Tab); setOpenGroup(null) }}
+                onClick={() => { changeTab(group as Tab); setOpenGroup(null) }}
               >
                 {label}
               </button>
@@ -445,7 +476,7 @@ export default function Page() {
                       <button
                         key={tab}
                         className={`dropdown-item${activeTab === tab ? ' active' : ''}`}
-                        onClick={() => { setActiveTab(tab); setOpenGroup(null) }}
+                        onClick={() => { changeTab(tab); setOpenGroup(null) }}
                       >
                         {tabLabel}
                       </button>
@@ -469,7 +500,6 @@ export default function Page() {
 
       <div className="content">
 
-        {/* DASHBOARD */}
         {activeTab === 'dashboard' && (
           <div className="dashboard">
             <h2 className="dashboard-title">Dashboard</h2>
@@ -521,7 +551,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* PROFILES */}
         {activeTab === 'profiles' && (
           <div className="card">
             <h2 className="section-title">Profiles</h2>
@@ -548,7 +577,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* WHITELISTED EMAILS */}
         {activeTab === 'whitelisted_emails' && (
           <div className="card">
             <div className="section-header">
@@ -569,7 +597,7 @@ export default function Page() {
                       <td className="td">{e.modified_datetime_utc ? new Date(e.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('whitelisted_emails', e)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('whitelist_email_addresses', e.id, () => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('whitelist_email_addresses', e.id, 'email', () => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -580,7 +608,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* IMAGES */}
         {activeTab === 'images' && (
           <div className="card">
             <div className="section-header">
@@ -600,7 +627,7 @@ export default function Page() {
                       <TextCell value={img.image_description} title="Image Description" />
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('image_edit', img)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('images', img.id, () => fetchTable('images', setImages, imageP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('images', img.id, 'image', () => fetchTable('images', setImages, imageP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -611,7 +638,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* CAPTIONS */}
         {activeTab === 'captions' && (
           <div className="card">
             <h2 className="section-title">Captions</h2>
@@ -637,7 +663,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* CAPTION EXAMPLES */}
         {activeTab === 'caption_examples' && (
           <div className="card">
             <div className="section-header">
@@ -657,7 +682,7 @@ export default function Page() {
                       <TextCell value={ex.image_description} title="Image Description" />
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('caption_examples', ex)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('caption_examples', ex.id, () => fetchTable('caption_examples', setCaptionExamples, captionExP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('caption_examples', ex.id, 'caption example', () => fetchTable('caption_examples', setCaptionExamples, captionExP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -668,7 +693,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* CAPTION REQUESTS */}
         {activeTab === 'caption_requests' && (
           <div className="card">
             <h2 className="section-title">Caption Requests</h2>
@@ -701,7 +725,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* HUMOR FLAVORS */}
         {activeTab === 'humor_flavors' && (
           <div className="card">
             <h2 className="section-title">Humor Flavors</h2>
@@ -724,7 +747,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* HUMOR FLAVOR STEPS */}
         {activeTab === 'humor_flavor_steps' && (
           <div className="card">
             <h2 className="section-title">Humor Flavor Steps</h2>
@@ -750,7 +772,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* HUMOR FLAVOR MIX */}
         {activeTab === 'humor_flavor_mix' && (
           <div className="card">
             <div className="section-header">
@@ -761,7 +782,7 @@ export default function Page() {
               <table className="table">
                 <thead>
                   <tr>
-                    {['ID', 'Humor Flavor ID', 'Caption Count', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => (
+                    {['ID', 'Humor Flavor ID', 'Flavor Slug', 'Flavor Description', 'Caption Count', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => (
                       <th key={h} className="th">{h}</th>
                     ))}
                   </tr>
@@ -771,6 +792,8 @@ export default function Page() {
                     <tr key={m.id}>
                       <td className="td">{m.id}</td>
                       <td className="td">{m.humor_flavor_id ?? '—'}</td>
+                      <td className="td">{m.humor_flavors?.slug ?? '—'}</td>
+                      <TextCell value={m.humor_flavors?.description} title="Flavor Description" />
                       <td className="td">{m.caption_count ?? '—'}</td>
                       <TextCell value={m.created_by_user_id} title="Created By User ID" />
                       <TextCell value={m.modified_by_user_id} title="Modified By User ID" />
@@ -778,7 +801,7 @@ export default function Page() {
                       <td className="td">{m.modified_datetime_utc ? new Date(m.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('humor_flavor_mix', m)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('humor_flavor_mix', m.id, () => fetchTable('humor_flavor_mix', setHumorFlavorMix, humorFlavorMixP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('humor_flavor_mix', m.id, 'humor flavor mix', () => fetchHumorFlavorMix(humorFlavorMixP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -789,7 +812,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* LLM MODELS */}
         {activeTab === 'llm_models' && (
           <div className="card">
             <div className="section-header">
@@ -808,7 +830,7 @@ export default function Page() {
                       <td className="td">{new Date(m.created_datetime_utc).toLocaleString()}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('llm_models', m)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('llm_models', m.id, () => fetchTable('llm_models', setLlmModels, llmModelP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('llm_models', m.id, 'LLM model', () => fetchTable('llm_models', setLlmModels, llmModelP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -819,7 +841,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* LLM PROVIDERS */}
         {activeTab === 'llm_providers' && (
           <div className="card">
             <div className="section-header">
@@ -837,7 +858,7 @@ export default function Page() {
                       <td className="td">{new Date(p.created_datetime_utc).toLocaleString()}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('llm_providers', p)}>Edit</button>
-                        <button className="btn-delete" onClick={() => handleDelete('llm_providers', p.id, () => fetchTable('llm_providers', setLlmProviders, llmProviderP.page))}>Delete</button>
+                        <button className="btn-delete" onClick={() => handleDelete('llm_providers', p.id, 'LLM provider', () => fetchTable('llm_providers', setLlmProviders, llmProviderP.page))}>Delete</button>
                       </td>
                     </tr>
                   ))}
@@ -848,7 +869,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* LLM RESPONSES */}
         {activeTab === 'llm_responses' && (
           <div className="card">
             <h2 className="section-title">LLM Model Responses</h2>
@@ -885,7 +905,6 @@ export default function Page() {
           </div>
         )}
 
-        {/* LLM PROMPT CHAINS */}
         {activeTab === 'llm_prompt_chains' && (
           <div className="card">
             <h2 className="section-title">LLM Prompt Chains</h2>
@@ -918,7 +937,6 @@ export default function Page() {
 
       </div>
 
-      {/* CRUD MODALS */}
       {modal?.type === 'image_new' && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal" onClick={e => e.stopPropagation()}>
@@ -999,7 +1017,7 @@ export default function Page() {
             { key: 'humor_flavor_id', label: 'Humor Flavor ID', type: 'number' },
             { key: 'caption_count', label: 'Caption Count', type: 'number' },
           ]}
-          refresh={() => fetchTable('humor_flavor_mix', setHumorFlavorMix, humorFlavorMixP.page)} />
+          refresh={() => fetchHumorFlavorMix(humorFlavorMixP.page)} />
       )}
     </div>
   )
