@@ -7,7 +7,7 @@ import './styling.css'
 type NavGroup = 'dashboard' | 'profiles' | 'images' | 'captions' | 'humor' | 'llm'
 type Tab =
   | 'dashboard'
-  | 'profiles' | 'whitelisted_emails'
+  | 'profiles' | 'whitelisted_emails' | 'allowed_signup_domains'
   | 'images'
   | 'captions' | 'caption_examples' | 'caption_requests'
   | 'humor_flavors' | 'humor_flavor_steps' | 'humor_flavor_mix'
@@ -22,6 +22,7 @@ const NAV_GROUPS: { group: NavGroup; label: string; tabs?: { tab: Tab; label: st
     tabs: [
       { tab: 'profiles', label: 'Profiles' },
       { tab: 'whitelisted_emails', label: 'Whitelisted Emails' },
+      { tab: 'allowed_signup_domains', label: 'Domains' },
     ],
   },
   { group: 'images', label: 'Images' },
@@ -73,6 +74,9 @@ export default function Page() {
   const [previewText, setPreviewText] = useState<{ title: string; content: string } | null>(null)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
   const [sortAsc, setSortAsc] = useState(false)
+  const [allowedDomains, setAllowedDomains] = useState<any[]>([])
+  const domainP = usePage()
+
 
   const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ msg, type })
@@ -207,6 +211,7 @@ export default function Page() {
       fetchTable('llm_model_responses', setLlmResponses, llmRespP.page),
       fetchTable('llm_prompt_chains', setLlmPromptChains, llmChainP.page),
       fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page),
+      fetchTable('allowed_signup_domains', setAllowedDomains, domainP.page),
     ])
   }
 
@@ -233,10 +238,11 @@ export default function Page() {
     if (!isAdmin) return
     fetchAll()
   }, [
-    profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
-    humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
-    llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
-    sortAsc,
+       profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
+       humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
+       llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
+       domainP.page,
+       sortAsc,
   ])
 
   const handleDelete = async (table: string, id: any, label: string, refresh: () => void) => {
@@ -295,6 +301,7 @@ export default function Page() {
     setHumorFlavors([]); setHumorFlavorSteps([]); setHumorFlavorMix([])
     setLlmModels([]); setLlmProviders([]); setLlmResponses([])
     setLlmPromptChains([])
+    setAllowedDomains([])
     setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null); setTopFlavor(null)
   }
 
@@ -354,7 +361,7 @@ export default function Page() {
   )
 
   const activeGroup: NavGroup =
-    ['profiles', 'whitelisted_emails'].includes(activeTab) ? 'profiles' :
+    ['profiles', 'whitelisted_emails', 'allowed_signup_domains'].includes(activeTab) ? 'profiles' :
     ['captions', 'caption_examples', 'caption_requests'].includes(activeTab) ? 'captions' :
     ['humor_flavors', 'humor_flavor_steps', 'humor_flavor_mix'].includes(activeTab) ? 'humor' :
     ['llm_models', 'llm_providers', 'llm_responses', 'llm_prompt_chains'].includes(activeTab) ? 'llm' :
@@ -633,6 +640,43 @@ export default function Page() {
             <Pagination pager={emailP} data={whitelistedEmails} />
           </div>
         )}
+
+        {activeTab === 'allowed_signup_domains' && (
+          <div className="card">
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Allowed Signup Domains</h2>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('allowed_signup_domains')}>+ Add</button>
+              </div>
+            </div>
+            <div className="table-wrapper">
+              <table className="table">
+                <thead>
+                  <tr>{['ID', 'Domain', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {allowedDomains.map(d => (
+                    <tr key={d.id}>
+                      <td className="td">{d.id}</td>
+                      <td className="td">{d.apex_domain ?? '—'}</td>
+                      <TextCell value={d.created_by_user_id} title="Created By User ID" />
+                      <TextCell value={d.modified_by_user_id} title="Modified By User ID" />
+                      <td className="td">{d.created_datetime_utc ? new Date(d.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{d.modified_datetime_utc ? new Date(d.modified_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">
+                        <button className="btn-edit" onClick={() => openModal('allowed_signup_domains', d)}>Edit</button>
+                        <button className="btn-delete" onClick={() => handleDelete('allowed_signup_domains', d.id, 'domain', () => fetchTable('allowed_signup_domains', setAllowedDomains, domainP.page))}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <Pagination pager={domainP} data={allowedDomains} />
+          </div>
+        )}
+
 
         {activeTab === 'images' && (
           <div className="card">
@@ -1077,6 +1121,13 @@ export default function Page() {
           fields={[{ key: 'email_address', label: 'Email Address', type: 'email' }]}
           refresh={() => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page)} />
       )}
+
+    {modal?.type === 'allowed_signup_domains' && (
+      <FormModal title={modal.data?.id ? 'Edit Domain' : 'Add Domain'} table="allowed_signup_domains"
+        fields={[{ key: 'apex_domain', label: 'Domain (e.g. example.com)' }]}
+        refresh={() => fetchTable('allowed_signup_domains', setAllowedDomains, domainP.page)} />
+    )}
+
 
       {modal?.type === 'humor_flavor_mix' && (
         <FormModal title={modal.data?.id ? 'Edit Humor Flavor Mix' : 'Add Humor Flavor Mix'} table="humor_flavor_mix"
