@@ -99,6 +99,7 @@ export default function Page() {
   const [whitelistedEmails, setWhitelistedEmails] = useState<any[]>([])
   const [topCaption, setTopCaption] = useState<any>(null)
   const [avgLikes, setAvgLikes] = useState<number | null>(null)
+  const [topFlavor, setTopFlavor] = useState<any>(null)
 
   const profileP = usePage()
   const imageP = usePage()
@@ -175,11 +176,20 @@ export default function Page() {
       .from('captions').select('*, images(url, image_description)')
       .order('like_count', { ascending: false }).limit(1).single()
     if (topData) setTopCaption(topData)
+
     const { data: avgData } = await supabase.from('captions').select('like_count')
     if (avgData?.length) {
       const total = avgData.reduce((s: number, c: any) => s + (c.like_count ?? 0), 0)
       setAvgLikes(Math.round(total / avgData.length))
     }
+
+    const { data: topFlavorData } = await supabase
+      .from('humor_flavor_mix')
+      .select('caption_count, humor_flavors(slug, description)')
+      .order('caption_count', { ascending: false })
+      .limit(1)
+      .single()
+    if (topFlavorData) setTopFlavor(topFlavorData)
   }
 
   const fetchAll = async () => {
@@ -285,7 +295,7 @@ export default function Page() {
     setHumorFlavors([]); setHumorFlavorSteps([]); setHumorFlavorMix([])
     setLlmModels([]); setLlmProviders([]); setLlmResponses([])
     setLlmPromptChains([])
-    setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null)
+    setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null); setTopFlavor(null)
   }
 
   const SortToggle = () => (
@@ -504,7 +514,30 @@ export default function Page() {
                 <div className="stat-value-accent">{topCaption ? topCaption.like_count?.toLocaleString() : '—'}</div>
                 <div className="stat-sub">Most liked caption</div>
               </div>
+              <div className="stat-card">
+                <div className="stat-label">Most Used Humor Flavor</div>
+                <div className="stat-value" style={{ fontSize: '20px' }}>
+                  {topFlavor?.humor_flavors?.slug ?? '—'}
+                </div>
+                <div className="stat-sub">
+                  {topFlavor?.caption_count != null ? `${topFlavor.caption_count} captions` : 'No data'}
+                </div>
+              </div>
             </div>
+            {topFlavor?.humor_flavors?.description && (
+              <div className="card" style={{ marginBottom: '16px' }}>
+                <div className="top-caption-header">Top Humor Flavor Details</div>
+                <div style={{ padding: '12px 16px' }}>
+                  <div className="top-caption-field-label">Slug</div>
+                  <div className="top-caption-content">{topFlavor.humor_flavors.slug}</div>
+                  <div className="top-caption-field-label" style={{ marginTop: '10px' }}>Description</div>
+                  <div className="top-caption-desc">{topFlavor.humor_flavors.description}</div>
+                  <div style={{ marginTop: '10px' }}>
+                    <span className="badge-likes">{topFlavor.caption_count} captions assigned</span>
+                  </div>
+                </div>
+              </div>
+            )}
             {topCaption && (
               <div className="card">
                 <div className="top-caption-header">Most Liked Image + Caption Pair</div>
