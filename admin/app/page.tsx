@@ -72,6 +72,7 @@ export default function Page() {
   const [previewImg, setPreviewImg] = useState<string | null>(null)
   const [previewText, setPreviewText] = useState<{ title: string; content: string } | null>(null)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' | 'info' } | null>(null)
+  const [sortAsc, setSortAsc] = useState(false)
 
   const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ msg, type })
@@ -121,17 +122,19 @@ export default function Page() {
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (navRef.current && !navRef.current.contains(e.target as Node)) {
-        setOpenGroup(null)
-      }
+      if (navRef.current && !navRef.current.contains(e.target as Node)) setOpenGroup(null)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const fetchTable = async (table: string, setter: (d: any[]) => void, page: number, select = '*') => {
+  const fetchTable = async (table: string, setter: (d: any[]) => void, page: number, select = '*', orderCol = 'created_datetime_utc') => {
     const from = (page - 1) * ITEMS_PER_PAGE
-    const { data, error } = await supabase.from(table).select(select).range(from, from + ITEMS_PER_PAGE - 1)
+    const { data, error } = await supabase
+      .from(table)
+      .select(select)
+      .order(orderCol, { ascending: sortAsc })
+      .range(from, from + ITEMS_PER_PAGE - 1)
     if (!error && data) setter(data)
   }
 
@@ -140,6 +143,7 @@ export default function Page() {
     const { data, error } = await supabase
       .from('humor_flavor_mix')
       .select('*, humor_flavors(slug, description)')
+      .order('created_datetime_utc', { ascending: sortAsc })
       .range(from, from + ITEMS_PER_PAGE - 1)
     if (!error && data) setHumorFlavorMix(data)
   }
@@ -149,6 +153,7 @@ export default function Page() {
     const { data, error } = await supabase
       .from('caption_requests')
       .select('*')
+      .order('created_datetime_utc', { ascending: sortAsc })
       .range(from, from + ITEMS_PER_PAGE - 1)
     if (error || !data) return
     const enriched = await Promise.all(
@@ -221,6 +226,7 @@ export default function Page() {
     profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
     humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
     llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
+    sortAsc,
   ])
 
   const handleDelete = async (table: string, id: any, label: string, refresh: () => void) => {
@@ -238,7 +244,8 @@ export default function Page() {
     const payload: any = {}
     fields.forEach(f => { if (formData[f] !== undefined && formData[f] !== '') payload[f] = formData[f] })
     let error: any = null
-    if (modal?.data?.id) {
+    const isEdit = !!modal?.data?.id
+    if (isEdit) {
       const res = await supabase.from(table).update(payload).eq('id', modal.data.id)
       error = res.error
     } else {
@@ -248,7 +255,7 @@ export default function Page() {
     if (error) {
       showToast(`❌ Save failed: ${error.message}`, 'error')
     } else {
-      showToast(`✅ Saved successfully`, 'success')
+      showToast(isEdit ? `✅ Updated successfully` : `✅ Added successfully`, 'success')
       closeModal()
       refresh()
     }
@@ -280,6 +287,16 @@ export default function Page() {
     setLlmPromptChains([])
     setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null)
   }
+
+  const SortToggle = () => (
+    <button
+      className="btn-secondary"
+      style={{ fontSize: '12px', padding: '5px 12px' }}
+      onClick={() => setSortAsc(p => !p)}
+    >
+      {sortAsc ? '⬆ Oldest First' : '⬇ Latest First'}
+    </button>
+  )
 
   const Pagination = ({ pager, data }: { pager: ReturnType<typeof usePage>; data: any[] }) => (
     <div className="pagination">
@@ -315,20 +332,14 @@ export default function Page() {
   )
 
   const TextCell = ({ value, title }: { value: string | null | undefined; title: string }) => (
-    <td
-      className="td-truncate td-clickable"
-      onClick={() => value && setPreviewText({ title, content: value })}
-      title={value ?? ''}
-    >
+    <td className="td-truncate td-clickable" onClick={() => value && setPreviewText({ title, content: value })} title={value ?? ''}>
       {value ?? '—'}
     </td>
   )
 
   const ImgCell = ({ url }: { url: string | null | undefined }) => (
     <td className="td">
-      {url
-        ? <img src={url} alt="" width={80} className="table-img img-clickable" onClick={() => setPreviewImg(url)} />
-        : '—'}
+      {url ? <img src={url} alt="" width={80} className="table-img img-clickable" onClick={() => setPreviewImg(url)} /> : '—'}
     </td>
   )
 
@@ -406,17 +417,9 @@ export default function Page() {
             <button className="preview-close" onClick={() => setPreviewImg(null)}>✕</button>
             <img src={previewImg} alt="" className="img-preview-full" />
             <div className="preview-img-actions">
-              <a href={previewImg} target="_blank" rel="noopener noreferrer" className="preview-open-link">
-                Open in new tab ↗
-              </a>
-              <button
-                className="btn-secondary"
-                style={{ fontSize: '12px', padding: '6px 14px' }}
-                onClick={() => {
-                  navigator.clipboard.writeText(previewImg)
-                  showToast('Image URL copied!', 'success')
-                }}
-              >
+              <a href={previewImg} target="_blank" rel="noopener noreferrer" className="preview-open-link">Open in new tab ↗</a>
+              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 14px' }}
+                onClick={() => { navigator.clipboard.writeText(previewImg); showToast('Image URL copied!', 'success') }}>
                 Copy URL
               </button>
             </div>
@@ -433,10 +436,7 @@ export default function Page() {
             </div>
             <div className="preview-text-body">{previewText.content}</div>
             <div className="modal-actions">
-              <button className="btn-secondary" onClick={() => {
-                navigator.clipboard.writeText(previewText.content)
-                showToast('Copied to clipboard!', 'success')
-              }}>Copy</button>
+              <button className="btn-secondary" onClick={() => { navigator.clipboard.writeText(previewText.content); showToast('Copied to clipboard!', 'success') }}>Copy</button>
               <button className="btn-primary" onClick={() => setPreviewText(null)}>Close</button>
             </div>
           </div>
@@ -451,33 +451,24 @@ export default function Page() {
             <div className="nav-brand-name">Admin</div>
           </div>
         </div>
-
         <div className="nav-tabs">
           {NAV_GROUPS.map(({ group, label, tabs }) =>
             !tabs ? (
-              <button
-                key={group}
-                className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
-                onClick={() => { changeTab(group as Tab); setOpenGroup(null) }}
-              >
+              <button key={group} className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
+                onClick={() => { changeTab(group as Tab); setOpenGroup(null) }}>
                 {label}
               </button>
             ) : (
               <div key={group} className="nav-tab-group">
-                <button
-                  className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
-                  onClick={() => setOpenGroup(prev => prev === group ? null : group)}
-                >
+                <button className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
+                  onClick={() => setOpenGroup(prev => prev === group ? null : group)}>
                   {label} {openGroup === group ? '▴' : '▾'}
                 </button>
                 {openGroup === group && (
                   <div className="dropdown">
                     {tabs.map(({ tab, label: tabLabel }) => (
-                      <button
-                        key={tab}
-                        className={`dropdown-item${activeTab === tab ? ' active' : ''}`}
-                        onClick={() => { changeTab(tab); setOpenGroup(null) }}
-                      >
+                      <button key={tab} className={`dropdown-item${activeTab === tab ? ' active' : ''}`}
+                        onClick={() => { changeTab(tab); setOpenGroup(null) }}>
                         {tabLabel}
                       </button>
                     ))}
@@ -487,7 +478,6 @@ export default function Page() {
             )
           )}
         </div>
-
         <div className="nav-right">
           <div className="nav-avatar">{initials}</div>
           <div className="nav-user-info">
@@ -520,12 +510,8 @@ export default function Page() {
                 <div className="top-caption-header">Most Liked Image + Caption Pair</div>
                 <div className="top-caption-body">
                   {topCaption.images?.url && (
-                    <img
-                      src={topCaption.images.url}
-                      alt=""
-                      className="top-caption-img img-clickable"
-                      onClick={() => setPreviewImg(topCaption.images.url)}
-                    />
+                    <img src={topCaption.images.url} alt="" className="top-caption-img img-clickable"
+                      onClick={() => setPreviewImg(topCaption.images.url)} />
                   )}
                   <div className="top-caption-details">
                     <div>
@@ -553,21 +539,25 @@ export default function Page() {
 
         {activeTab === 'profiles' && (
           <div className="card">
-            <h2 className="section-title">Profiles</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Profiles</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'First Name', 'Last Name', 'Email', 'Superadmin', 'In Study', 'Matrix Admin', 'Created'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'First Name', 'Last Name', 'Email', 'Superadmin', 'In Study', 'Matrix Admin', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {profiles.map(p => (
                     <tr key={p.id}>
                       <TextCell value={p.id} title="Profile ID" />
-                      <td className="td">{p.first_name}</td>
-                      <td className="td">{p.last_name}</td>
-                      <td className="td">{p.email}</td>
+                      <td className="td">{p.first_name ?? '—'}</td>
+                      <td className="td">{p.last_name ?? '—'}</td>
+                      <td className="td">{p.email ?? '—'}</td>
                       <td className="td">{p.is_superadmin ? 'Yes' : 'No'}</td>
                       <td className="td">{p.is_in_study ? 'Yes' : 'No'}</td>
                       <td className="td">{p.is_matrix_admin ? 'Yes' : 'No'}</td>
-                      <td className="td">{new Date(p.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">{p.created_datetime_utc ? new Date(p.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{p.modified_datetime_utc ? new Date(p.modified_datetime_utc).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -581,7 +571,10 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>Whitelisted Emails</h2>
-              <button className="btn-add" onClick={() => openModal('whitelisted_emails')}>+ Add</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('whitelisted_emails')}>+ Add</button>
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
@@ -612,11 +605,14 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>Images</h2>
-              <button className="btn-add" onClick={() => openModal('image_new')}>+ Add Image</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('image_new')}>+ Add Image</button>
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['Preview', 'ID', 'URL', 'Public', 'Description', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['Preview', 'ID', 'URL', 'Public', 'Description', 'Additional Context', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {images.map(img => (
                     <tr key={img.id}>
@@ -625,6 +621,9 @@ export default function Page() {
                       <TextCell value={img.url} title="Image URL" />
                       <td className="td">{img.is_public ? 'Yes' : 'No'}</td>
                       <TextCell value={img.image_description} title="Image Description" />
+                      <TextCell value={img.additional_context} title="Additional Context" />
+                      <td className="td">{img.created_datetime_utc ? new Date(img.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{img.modified_datetime_utc ? new Date(img.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('image_edit', img)}>Edit</button>
                         <button className="btn-delete" onClick={() => handleDelete('images', img.id, 'image', () => fetchTable('images', setImages, imageP.page))}>Delete</button>
@@ -640,10 +639,13 @@ export default function Page() {
 
         {activeTab === 'captions' && (
           <div className="card">
-            <h2 className="section-title">Captions</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Captions</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Image', 'Caption', 'Public', 'Featured', 'Likes', 'Created'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Image', 'Caption', 'Public', 'Featured', 'Likes', 'Profile ID', 'Caption Request ID', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {captions.map(c => (
                     <tr key={c.id}>
@@ -652,8 +654,11 @@ export default function Page() {
                       <TextCell value={c.content} title="Caption" />
                       <td className="td"><span className={c.is_public ? 'visibility-public' : 'visibility-private'}>{c.is_public ? 'Public' : 'Private'}</span></td>
                       <td className="td">{c.is_featured ? 'Yes' : 'No'}</td>
-                      <td className="td">{c.like_count}</td>
-                      <td className="td">{new Date(c.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">{c.like_count ?? 0}</td>
+                      <TextCell value={c.profile_id} title="Profile ID" />
+                      <td className="td">{c.caption_request_id ?? '—'}</td>
+                      <td className="td">{c.created_datetime_utc ? new Date(c.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{c.modified_datetime_utc ? new Date(c.modified_datetime_utc).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -667,19 +672,26 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>Caption Examples</h2>
-              <button className="btn-add" onClick={() => openModal('caption_examples')}>+ Add</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('caption_examples')}>+ Add</button>
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Caption', 'Explanation', 'Priority', 'Image Desc', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Caption', 'Explanation', 'Priority', 'Image Desc', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {captionExamples.map(ex => (
                     <tr key={ex.id}>
                       <td className="td">{ex.id}</td>
                       <TextCell value={ex.caption} title="Caption" />
                       <TextCell value={ex.explanation} title="Explanation" />
-                      <td className="td">{ex.priority}</td>
+                      <td className="td">{ex.priority ?? '—'}</td>
                       <TextCell value={ex.image_description} title="Image Description" />
+                      <TextCell value={ex.created_by_user_id} title="Created By" />
+                      <TextCell value={ex.modified_by_user_id} title="Modified By" />
+                      <td className="td">{ex.created_datetime_utc ? new Date(ex.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{ex.modified_datetime_utc ? new Date(ex.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('caption_examples', ex)}>Edit</button>
                         <button className="btn-delete" onClick={() => handleDelete('caption_examples', ex.id, 'caption example', () => fetchTable('caption_examples', setCaptionExamples, captionExP.page))}>Delete</button>
@@ -695,15 +707,14 @@ export default function Page() {
 
         {activeTab === 'caption_requests' && (
           <div className="card">
-            <h2 className="section-title">Caption Requests</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Caption Requests</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
                 <thead>
-                  <tr>
-                    {['ID', 'Image', 'Image Desc', 'Profile ID', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => (
-                      <th key={h} className="th">{h}</th>
-                    ))}
-                  </tr>
+                  <tr>{['ID', 'Image', 'Image Desc', 'Profile ID', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {captionRequests.map(r => (
@@ -727,17 +738,23 @@ export default function Page() {
 
         {activeTab === 'humor_flavors' && (
           <div className="card">
-            <h2 className="section-title">Humor Flavors</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Humor Flavors</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Slug', 'Description', 'Created'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Slug', 'Description', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {humorFlavors.map(hf => (
                     <tr key={hf.id}>
                       <td className="td">{hf.id}</td>
-                      <td className="td">{hf.slug}</td>
+                      <td className="td">{hf.slug ?? '—'}</td>
                       <TextCell value={hf.description} title="Description" />
-                      <td className="td">{new Date(hf.created_datetime_utc).toLocaleString()}</td>
+                      <TextCell value={hf.created_by_user_id} title="Created By" />
+                      <TextCell value={hf.modified_by_user_id} title="Modified By" />
+                      <td className="td">{hf.created_datetime_utc ? new Date(hf.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{hf.modified_datetime_utc ? new Date(hf.modified_datetime_utc).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -749,20 +766,27 @@ export default function Page() {
 
         {activeTab === 'humor_flavor_steps' && (
           <div className="card">
-            <h2 className="section-title">Humor Flavor Steps</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>Humor Flavor Steps</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Flavor ID', 'Order', 'LLM Model', 'System Prompt', 'User Prompt', 'Description'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Flavor ID', 'Order', 'LLM Model', 'System Prompt', 'User Prompt', 'Description', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {humorFlavorSteps.map(s => (
                     <tr key={s.id}>
                       <td className="td">{s.id}</td>
-                      <td className="td">{s.humor_flavor_id}</td>
-                      <td className="td">{s.order_by}</td>
-                      <td className="td">{s.llm_model_id}</td>
+                      <td className="td">{s.humor_flavor_id ?? '—'}</td>
+                      <td className="td">{s.order_by ?? '—'}</td>
+                      <td className="td">{s.llm_model_id ?? '—'}</td>
                       <TextCell value={s.llm_system_prompt} title="System Prompt" />
                       <TextCell value={s.llm_user_prompt} title="User Prompt" />
                       <TextCell value={s.description} title="Description" />
+                      <TextCell value={s.created_by_user_id} title="Created By" />
+                      <TextCell value={s.modified_by_user_id} title="Modified By" />
+                      <td className="td">{s.created_datetime_utc ? new Date(s.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{s.modified_datetime_utc ? new Date(s.modified_datetime_utc).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -776,16 +800,15 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>Humor Flavor Mix</h2>
-              <button className="btn-add" onClick={() => openModal('humor_flavor_mix')}>+ Add</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('humor_flavor_mix')}>+ Add</button>
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
                 <thead>
-                  <tr>
-                    {['ID', 'Humor Flavor ID', 'Flavor Slug', 'Flavor Description', 'Caption Count', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => (
-                      <th key={h} className="th">{h}</th>
-                    ))}
-                  </tr>
+                  <tr>{['ID', 'Humor Flavor ID', 'Flavor Slug', 'Flavor Description', 'Caption Count', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {humorFlavorMix.map(m => (
@@ -816,18 +839,24 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>LLM Models</h2>
-              <button className="btn-add" onClick={() => openModal('llm_models')}>+ Add</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('llm_models')}>+ Add</button>
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Name', 'Provider ID', 'Created', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Name', 'Provider ID', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {llmModels.map(m => (
                     <tr key={m.id}>
                       <td className="td">{m.id}</td>
-                      <td className="td">{m.name}</td>
+                      <td className="td">{m.name ?? '—'}</td>
                       <td className="td">{m.llm_provider_id ?? '—'}</td>
-                      <td className="td">{new Date(m.created_datetime_utc).toLocaleString()}</td>
+                      <TextCell value={m.created_by_user_id} title="Created By" />
+                      <TextCell value={m.modified_by_user_id} title="Modified By" />
+                      <td className="td">{m.created_datetime_utc ? new Date(m.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{m.modified_datetime_utc ? new Date(m.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('llm_models', m)}>Edit</button>
                         <button className="btn-delete" onClick={() => handleDelete('llm_models', m.id, 'LLM model', () => fetchTable('llm_models', setLlmModels, llmModelP.page))}>Delete</button>
@@ -845,17 +874,23 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>LLM Providers</h2>
-              <button className="btn-add" onClick={() => openModal('llm_providers')}>+ Add</button>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <SortToggle />
+                <button className="btn-add" onClick={() => openModal('llm_providers')}>+ Add</button>
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'Name', 'Created', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead><tr>{['ID', 'Name', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
                 <tbody>
                   {llmProviders.map(p => (
                     <tr key={p.id}>
                       <td className="td">{p.id}</td>
-                      <td className="td">{p.name}</td>
-                      <td className="td">{new Date(p.created_datetime_utc).toLocaleString()}</td>
+                      <td className="td">{p.name ?? '—'}</td>
+                      <TextCell value={p.created_by_user_id} title="Created By" />
+                      <TextCell value={p.modified_by_user_id} title="Modified By" />
+                      <td className="td">{p.created_datetime_utc ? new Date(p.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{p.modified_datetime_utc ? new Date(p.modified_datetime_utc).toLocaleString() : '—'}</td>
                       <td className="td">
                         <button className="btn-edit" onClick={() => openModal('llm_providers', p)}>Edit</button>
                         <button className="btn-delete" onClick={() => handleDelete('llm_providers', p.id, 'LLM provider', () => fetchTable('llm_providers', setLlmProviders, llmProviderP.page))}>Delete</button>
@@ -871,15 +906,14 @@ export default function Page() {
 
         {activeTab === 'llm_responses' && (
           <div className="card">
-            <h2 className="section-title">LLM Model Responses</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>LLM Model Responses</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
                 <thead>
-                  <tr>
-                    {['ID', 'Response', 'Model ID', 'Processing (s)', 'System Prompt', 'User Prompt', 'Temperature', 'Humor Flavor', 'Profile ID', 'Caption Request', 'Prompt Chain', 'Created'].map(h => (
-                      <th key={h} className="th">{h}</th>
-                    ))}
-                  </tr>
+                  <tr>{['ID', 'Response', 'Model ID', 'Processing (s)', 'System Prompt', 'User Prompt', 'Temperature', 'Humor Flavor', 'Profile ID', 'Caption Request', 'Prompt Chain', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {llmResponses.map(r => (
@@ -896,6 +930,7 @@ export default function Page() {
                       <td className="td">{r.caption_request_id ?? '—'}</td>
                       <td className="td">{r.llm_prompt_chain_id ?? '—'}</td>
                       <td className="td">{r.created_datetime_utc ? new Date(r.created_datetime_utc).toLocaleString() : '—'}</td>
+                      <td className="td">{r.modified_datetime_utc ? new Date(r.modified_datetime_utc).toLocaleString() : '—'}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -907,15 +942,14 @@ export default function Page() {
 
         {activeTab === 'llm_prompt_chains' && (
           <div className="card">
-            <h2 className="section-title">LLM Prompt Chains</h2>
+            <div className="section-header">
+              <h2 className="section-title" style={{ margin: 0 }}>LLM Prompt Chains</h2>
+              <SortToggle />
+            </div>
             <div className="table-wrapper">
               <table className="table">
                 <thead>
-                  <tr>
-                    {['ID', 'Caption Request ID', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => (
-                      <th key={h} className="th">{h}</th>
-                    ))}
-                  </tr>
+                  <tr>{['ID', 'Caption Request ID', 'Created By', 'Modified By', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr>
                 </thead>
                 <tbody>
                   {llmPromptChains.map(c => (
