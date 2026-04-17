@@ -755,12 +755,10 @@ export default function Page() {
                     <span className="badge-likes">{captionStats.sixToTwentyLikes}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                    <span className="top-caption-field-label">21+ likes</span>
-                    <span className="badge-likes">{captionStats.overTwentyLikes}</span>
+
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginTop: '8px' }}>
-                    <span className="top-caption-field-label">Min / Max likes</span>
-                    <span className="badge-likes">{captionStats.minLikes} / {captionStats.maxLikes}</span>
+
                   </div>
                 </div>
               </div>
