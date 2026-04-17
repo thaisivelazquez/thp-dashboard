@@ -77,7 +77,6 @@ export default function Page() {
   const [allowedDomains, setAllowedDomains] = useState<any[]>([])
   const domainP = usePage()
 
-
   const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ msg, type })
     setTimeout(() => setToast(null), 3000)
@@ -102,8 +101,26 @@ export default function Page() {
   const [llmPromptChains, setLlmPromptChains] = useState<any[]>([])
   const [whitelistedEmails, setWhitelistedEmails] = useState<any[]>([])
   const [topCaption, setTopCaption] = useState<any>(null)
+  const [lowestCaption, setLowestCaption] = useState<any>(null)
   const [avgLikes, setAvgLikes] = useState<number | null>(null)
   const [topFlavor, setTopFlavor] = useState<any>(null)
+
+  const [captionStats, setCaptionStats] = useState({
+    total: 0,
+    publicCount: 0,
+    privateCount: 0,
+    featuredCount: 0,
+    hiddenCount: 0,
+    zeroLikeCount: 0,
+    oneToFiveLikes: 0,
+    sixToTwentyLikes: 0,
+    overTwentyLikes: 0,
+    avgLikes: 0,
+    maxLikes: 0,
+    minLikes: 0,
+    recent24hCount: 0,
+    recent7dCount: 0,
+  })
 
   const profileP = usePage()
   const imageP = usePage()
@@ -160,7 +177,9 @@ export default function Page() {
       .select('*')
       .order('created_datetime_utc', { ascending: sortAsc })
       .range(from, from + ITEMS_PER_PAGE - 1)
+
     if (error || !data) return
+
     const enriched = await Promise.all(
       data.map(async (req) => {
         if (!req.image_id) return { ...req, image: null }
@@ -172,19 +191,105 @@ export default function Page() {
         return { ...req, image: imgData ?? null }
       })
     )
+
     setCaptionRequests(enriched)
   }
 
   const fetchDashboardStats = async () => {
     const { data: topData } = await supabase
-      .from('captions').select('*, images(url, image_description)')
-      .order('like_count', { ascending: false }).limit(1).single()
+      .from('captions')
+      .select('*, images(url, image_description)')
+      .order('like_count', { ascending: false })
+      .limit(1)
+      .single()
+
     if (topData) setTopCaption(topData)
 
-    const { data: avgData } = await supabase.from('captions').select('like_count')
-    if (avgData?.length) {
-      const total = avgData.reduce((s: number, c: any) => s + (c.like_count ?? 0), 0)
-      setAvgLikes(Math.round(total / avgData.length))
+    const { data: lowestData } = await supabase
+      .from('captions')
+      .select('*, images(url, image_description)')
+      .order('like_count', { ascending: true })
+      .limit(1)
+      .single()
+
+    if (lowestData) setLowestCaption(lowestData)
+
+    const { data: captionData } = await supabase
+      .from('captions')
+      .select('id, content, like_count, is_public, is_featured, created_datetime_utc')
+
+    if (captionData?.length) {
+      const now = new Date()
+      const oneDayAgo = new Date(now)
+      oneDayAgo.setDate(now.getDate() - 1)
+
+      const sevenDaysAgo = new Date(now)
+      sevenDaysAgo.setDate(now.getDate() - 7)
+
+      const likes = captionData.map(c => c.like_count ?? 0)
+      const totalLikes = likes.reduce((sum, n) => sum + n, 0)
+      const total = captionData.length
+      const publicCount = captionData.filter(c => c.is_public).length
+      const privateCount = total - publicCount
+      const featuredCount = captionData.filter(c => c.is_featured).length
+      const hiddenCount = captionData.filter(c => !c.is_public).length
+      const zeroLikeCount = captionData.filter(c => (c.like_count ?? 0) === 0).length
+      const oneToFiveLikes = captionData.filter(c => {
+        const likes = c.like_count ?? 0
+        return likes >= 1 && likes <= 5
+      }).length
+      const sixToTwentyLikes = captionData.filter(c => {
+        const likes = c.like_count ?? 0
+        return likes >= 6 && likes <= 20
+      }).length
+      const overTwentyLikes = captionData.filter(c => (c.like_count ?? 0) > 20).length
+      const avg = Math.round(totalLikes / total)
+      const maxLikes = Math.max(...likes)
+      const minLikes = Math.min(...likes)
+      const recent24hCount = captionData.filter(c =>
+        c.created_datetime_utc && new Date(c.created_datetime_utc) >= oneDayAgo
+      ).length
+      const recent7dCount = captionData.filter(c =>
+        c.created_datetime_utc && new Date(c.created_datetime_utc) >= sevenDaysAgo
+      ).length
+
+      setAvgLikes(avg)
+      setCaptionStats({
+        total,
+        publicCount,
+        privateCount,
+        featuredCount,
+        hiddenCount,
+        zeroLikeCount,
+        oneToFiveLikes,
+        sixToTwentyLikes,
+        overTwentyLikes,
+        avgLikes: avg,
+        maxLikes,
+        minLikes,
+        recent24hCount,
+        recent7dCount,
+      })
+    } else {
+      setAvgLikes(null)
+      setCaptionStats({
+        total: 0,
+        publicCount: 0,
+        privateCount: 0,
+        featuredCount: 0,
+        hiddenCount: 0,
+        zeroLikeCount: 0,
+        oneToFiveLikes: 0,
+        sixToTwentyLikes: 0,
+        overTwentyLikes: 0,
+        avgLikes: 0,
+        maxLikes: 0,
+        minLikes: 0,
+        recent24hCount: 0,
+        recent7dCount: 0,
+      })
+      setTopCaption(null)
+      setLowestCaption(null)
     }
 
     const { data: topFlavorData } = await supabase
@@ -193,6 +298,7 @@ export default function Page() {
       .order('caption_count', { ascending: false })
       .limit(1)
       .single()
+
     if (topFlavorData) setTopFlavor(topFlavorData)
   }
 
@@ -220,15 +326,27 @@ export default function Page() {
       const { data: { session } } = await supabase.auth.getSession()
       const u = session?.user ?? null
       setUser(u)
+
       if (u) {
-        const { data, error } = await supabase.from('profiles').select('is_superadmin').eq('id', u.id).single()
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('is_superadmin')
+          .eq('id', u.id)
+          .single()
+
         if (!error) {
           const admin = data?.is_superadmin ?? false
           setIsAdmin(admin)
-          if (admin) { await fetchAll(); await fetchDashboardStats() }
-        } else { setIsAdmin(false) }
+          if (admin) {
+            await fetchAll()
+            await fetchDashboardStats()
+          }
+        } else {
+          setIsAdmin(false)
+        }
       }
     }
+
     loadUser()
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => setUser(session?.user ?? null))
     return () => subscription.unsubscribe()
@@ -237,12 +355,14 @@ export default function Page() {
   useEffect(() => {
     if (!isAdmin) return
     fetchAll()
+    fetchDashboardStats()
   }, [
-       profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
-       humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
-       llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
-       domainP.page,
-       sortAsc,
+    profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
+    humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
+    llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
+    domainP.page,
+    sortAsc,
+    isAdmin,
   ])
 
   const handleDelete = async (table: string, id: any, label: string, refresh: () => void) => {
@@ -253,14 +373,19 @@ export default function Page() {
     } else {
       showToast(`✅ ${label} deleted successfully`, 'success')
       refresh()
+      fetchDashboardStats()
     }
   }
 
   const handleSave = async (table: string, fields: string[], refresh: () => void) => {
     const payload: any = {}
-    fields.forEach(f => { if (formData[f] !== undefined && formData[f] !== '') payload[f] = formData[f] })
+    fields.forEach(f => {
+      if (formData[f] !== undefined && formData[f] !== '') payload[f] = formData[f]
+    })
+
     let error: any = null
     const isEdit = !!modal?.data?.id
+
     if (isEdit) {
       const res = await supabase.from(table).update(payload).eq('id', modal.data.id)
       error = res.error
@@ -268,12 +393,14 @@ export default function Page() {
       const res = await supabase.from(table).insert(payload)
       error = res.error
     }
+
     if (error) {
       showToast(`❌ Save failed: ${error.message}`, 'error')
     } else {
       showToast(isEdit ? `✅ Updated successfully` : `✅ Added successfully`, 'success')
       closeModal()
       refresh()
+      fetchDashboardStats()
     }
   }
 
@@ -281,7 +408,10 @@ export default function Page() {
     const ext = file.name.split('.').pop()
     const fileName = `${crypto.randomUUID()}.${ext}`
     const { error } = await supabase.storage.from('images').upload(fileName, file)
-    if (error) { showToast(`❌ Upload failed: ${error.message}`, 'error'); return }
+    if (error) {
+      showToast(`❌ Upload failed: ${error.message}`, 'error')
+      return
+    }
     showToast('✅ Image uploaded!', 'success')
     return supabase.storage.from('images').getPublicUrl(fileName).data.publicUrl
   }
@@ -289,20 +419,51 @@ export default function Page() {
   const loginWithGoogle = async () => {
     await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: `${window.location.origin}/auth/callback`, queryParams: { prompt: 'select_account' } },
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: { prompt: 'select_account' },
+      },
     })
   }
 
   const logout = async () => {
     await supabase.auth.signOut()
-    setUser(null); setIsAdmin(null)
-    setProfiles([]); setImages([]); setCaptions([])
-    setCaptionExamples([]); setCaptionRequests([])
-    setHumorFlavors([]); setHumorFlavorSteps([]); setHumorFlavorMix([])
-    setLlmModels([]); setLlmProviders([]); setLlmResponses([])
+    setUser(null)
+    setIsAdmin(null)
+    setProfiles([])
+    setImages([])
+    setCaptions([])
+    setCaptionExamples([])
+    setCaptionRequests([])
+    setHumorFlavors([])
+    setHumorFlavorSteps([])
+    setHumorFlavorMix([])
+    setLlmModels([])
+    setLlmProviders([])
+    setLlmResponses([])
     setLlmPromptChains([])
     setAllowedDomains([])
-    setWhitelistedEmails([]); setTopCaption(null); setAvgLikes(null); setTopFlavor(null)
+    setWhitelistedEmails([])
+    setTopCaption(null)
+    setLowestCaption(null)
+    setAvgLikes(null)
+    setTopFlavor(null)
+    setCaptionStats({
+      total: 0,
+      publicCount: 0,
+      privateCount: 0,
+      featuredCount: 0,
+      hiddenCount: 0,
+      zeroLikeCount: 0,
+      oneToFiveLikes: 0,
+      sixToTwentyLikes: 0,
+      overTwentyLikes: 0,
+      avgLikes: 0,
+      maxLikes: 0,
+      minLikes: 0,
+      recent24hCount: 0,
+      recent7dCount: 0,
+    })
   }
 
   const SortToggle = () => (
@@ -335,9 +496,12 @@ export default function Page() {
         {fields.map(f => (
           <div className="modal-field" key={f.key}>
             <label className="modal-label">{f.label}</label>
-            <input className="modal-input" type={f.type ?? 'text'}
+            <input
+              className="modal-input"
+              type={f.type ?? 'text'}
               value={formData[f.key] ?? ''}
-              onChange={e => setFormData((prev: any) => ({ ...prev, [f.key]: e.target.value }))} />
+              onChange={e => setFormData((prev: any) => ({ ...prev, [f.key]: e.target.value }))}
+            />
           </div>
         ))}
         <div className="modal-actions">
@@ -421,7 +585,6 @@ export default function Page() {
 
   return (
     <div className="wrapper">
-
       {toast && (
         <div className={`toast ${toast.type === 'success' ? 'toast-success' : toast.type === 'error' ? 'toast-error' : ''}`}>
           {toast.msg}
@@ -435,8 +598,11 @@ export default function Page() {
             <img src={previewImg} alt="" className="img-preview-full" />
             <div className="preview-img-actions">
               <a href={previewImg} target="_blank" rel="noopener noreferrer" className="preview-open-link">Open in new tab ↗</a>
-              <button className="btn-secondary" style={{ fontSize: '12px', padding: '6px 14px' }}
-                onClick={() => { navigator.clipboard.writeText(previewImg); showToast('Image URL copied!', 'success') }}>
+              <button
+                className="btn-secondary"
+                style={{ fontSize: '12px', padding: '6px 14px' }}
+                onClick={() => { navigator.clipboard.writeText(previewImg); showToast('Image URL copied!', 'success') }}
+              >
                 Copy URL
               </button>
             </div>
@@ -468,24 +634,33 @@ export default function Page() {
             <div className="nav-brand-name">Admin</div>
           </div>
         </div>
+
         <div className="nav-tabs">
           {NAV_GROUPS.map(({ group, label, tabs }) =>
             !tabs ? (
-              <button key={group} className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
-                onClick={() => { changeTab(group as Tab); setOpenGroup(null) }}>
+              <button
+                key={group}
+                className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
+                onClick={() => { changeTab(group as Tab); setOpenGroup(null) }}
+              >
                 {label}
               </button>
             ) : (
               <div key={group} className="nav-tab-group">
-                <button className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
-                  onClick={() => setOpenGroup(prev => prev === group ? null : group)}>
+                <button
+                  className={`nav-tab-btn${activeGroup === group ? ' active' : ''}`}
+                  onClick={() => setOpenGroup(prev => prev === group ? null : group)}
+                >
                   {label} {openGroup === group ? '▴' : '▾'}
                 </button>
                 {openGroup === group && (
                   <div className="dropdown">
                     {tabs.map(({ tab, label: tabLabel }) => (
-                      <button key={tab} className={`dropdown-item${activeTab === tab ? ' active' : ''}`}
-                        onClick={() => { changeTab(tab); setOpenGroup(null) }}>
+                      <button
+                        key={tab}
+                        className={`dropdown-item${activeTab === tab ? ' active' : ''}`}
+                        onClick={() => { changeTab(tab); setOpenGroup(null) }}
+                      >
                         {tabLabel}
                       </button>
                     ))}
@@ -495,6 +670,7 @@ export default function Page() {
             )
           )}
         </div>
+
         <div className="nav-right">
           <div className="nav-avatar">{initials}</div>
           <div className="nav-user-info">
@@ -506,21 +682,25 @@ export default function Page() {
       </nav>
 
       <div className="content">
-
         {activeTab === 'dashboard' && (
           <div className="dashboard">
             <h2 className="dashboard-title">Dashboard</h2>
+
             <div className="stat-cards-row">
               <div className="stat-card">
-                <div className="stat-label">Average Likes / Caption</div>
-                <div className="stat-value">{avgLikes !== null ? avgLikes.toLocaleString() : '—'}</div>
-                <div className="stat-sub">Across all captions</div>
+                <div className="stat-label">Total Captions</div>
+                <div className="stat-value">{captionStats.total.toLocaleString()}</div>
+                <div className="stat-sub">All captions in the system</div>
               </div>
+
+
+
               <div className="stat-card">
                 <div className="stat-label">Top Caption Likes</div>
-                <div className="stat-value-accent">{topCaption ? topCaption.like_count?.toLocaleString() : '—'}</div>
-                <div className="stat-sub">Most liked caption</div>
+                <div className="stat-value-accent">{topCaption ? (topCaption.like_count ?? 0).toLocaleString() : '—'}</div>
+                <div className="stat-sub">Highest-liked caption</div>
               </div>
+
               <div className="stat-card">
                 <div className="stat-label">Most Used Humor Flavor</div>
                 <div className="stat-value" style={{ fontSize: '20px' }}>
@@ -531,44 +711,144 @@ export default function Page() {
                 </div>
               </div>
             </div>
+
+            <div className="stat-cards-row" style={{ marginTop: '16px' }}>
+              <div className="stat-card">
+                <div className="stat-label">Public Captions</div>
+                <div className="stat-value">{captionStats.publicCount.toLocaleString()}</div>
+                <div className="stat-sub">{captionStats.privateCount.toLocaleString()} private</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Featured Captions</div>
+                <div className="stat-value">{captionStats.featuredCount.toLocaleString()}</div>
+                <div className="stat-sub">Highlighted by admins</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">Zero-Like Captions</div>
+                <div className="stat-value">{captionStats.zeroLikeCount.toLocaleString()}</div>
+                <div className="stat-sub">May need review or promotion</div>
+              </div>
+
+              <div className="stat-card">
+                <div className="stat-label">New Last 7 Days</div>
+                <div className="stat-value-accent">{captionStats.recent7dCount.toLocaleString()}</div>
+                <div className="stat-sub">{captionStats.recent24hCount.toLocaleString()} in last 24h</div>
+              </div>
+            </div>
+
+            <div className="card" style={{ marginTop: '16px', marginBottom: '16px' }}>
+              <div className="top-caption-header">Caption Rating Distribution</div>
+              <div style={{ padding: '16px' }}>
+                <div style={{ display: 'grid', gap: '12px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <span className="top-caption-field-label">0 likes</span>
+                    <span className="badge-likes">{captionStats.zeroLikeCount}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <span className="top-caption-field-label">1–5 likes</span>
+                    <span className="badge-likes">{captionStats.oneToFiveLikes}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <span className="top-caption-field-label">6–20 likes</span>
+                    <span className="badge-likes">{captionStats.sixToTwentyLikes}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
+                    <span className="top-caption-field-label">21+ likes</span>
+                    <span className="badge-likes">{captionStats.overTwentyLikes}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginTop: '8px' }}>
+                    <span className="top-caption-field-label">Min / Max likes</span>
+                    <span className="badge-likes">{captionStats.minLikes} / {captionStats.maxLikes}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {topFlavor?.humor_flavors?.description && (
               <div className="card" style={{ marginBottom: '16px' }}>
                 <div className="top-caption-header">Top Humor Flavor Details</div>
                 <div style={{ padding: '12px 16px' }}>
                   <div className="top-caption-field-label">Slug</div>
                   <div className="top-caption-content">{topFlavor.humor_flavors.slug}</div>
+
                   <div className="top-caption-field-label" style={{ marginTop: '10px' }}>Description</div>
                   <div className="top-caption-desc">{topFlavor.humor_flavors.description}</div>
+
                   <div style={{ marginTop: '10px' }}>
                     <span className="badge-likes">{topFlavor.caption_count} captions assigned</span>
                   </div>
                 </div>
               </div>
             )}
+
             {topCaption && (
-              <div className="card">
+              <div className="card" style={{ marginBottom: '16px' }}>
                 <div className="top-caption-header">Most Liked Image + Caption Pair</div>
                 <div className="top-caption-body">
                   {topCaption.images?.url && (
-                    <img src={topCaption.images.url} alt="" className="top-caption-img img-clickable"
-                      onClick={() => setPreviewImg(topCaption.images.url)} />
+                    <img
+                      src={topCaption.images.url}
+                      alt=""
+                      className="top-caption-img img-clickable"
+                      onClick={() => setPreviewImg(topCaption.images.url)}
+                    />
                   )}
                   <div className="top-caption-details">
                     <div>
                       <div className="top-caption-field-label">Caption</div>
                       <div className="top-caption-content">{topCaption.content}</div>
                     </div>
+
                     {topCaption.images?.image_description && (
                       <div>
                         <div className="top-caption-field-label">Image Description</div>
                         <div className="top-caption-desc">{topCaption.images.image_description}</div>
                       </div>
                     )}
+
                     <div className="top-caption-badges">
                       <span className={topCaption.is_public ? 'badge-public' : 'badge-private'}>
                         {topCaption.is_public ? 'Public' : 'Private'}
                       </span>
-                      <span className="badge-likes">{topCaption.like_count} likes</span>
+                      <span className="badge-likes">{topCaption.like_count ?? 0} likes</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {lowestCaption && (
+              <div className="card">
+                <div className="top-caption-header">Lowest Performing Caption</div>
+                <div className="top-caption-body">
+                  {lowestCaption.images?.url && (
+                    <img
+                      src={lowestCaption.images.url}
+                      alt=""
+                      className="top-caption-img img-clickable"
+                      onClick={() => setPreviewImg(lowestCaption.images.url)}
+                    />
+                  )}
+                  <div className="top-caption-details">
+                    <div>
+                      <div className="top-caption-field-label">Caption</div>
+                      <div className="top-caption-content">{lowestCaption.content}</div>
+                    </div>
+
+                    {lowestCaption.images?.image_description && (
+                      <div>
+                        <div className="top-caption-field-label">Image Description</div>
+                        <div className="top-caption-desc">{lowestCaption.images.image_description}</div>
+                      </div>
+                    )}
+
+                    <div className="top-caption-badges">
+                      <span className={lowestCaption.is_public ? 'badge-public' : 'badge-private'}>
+                        {lowestCaption.is_public ? 'Public' : 'Private'}
+                      </span>
+                      <span className="badge-likes">{lowestCaption.like_count ?? 0} likes</span>
                     </div>
                   </div>
                 </div>
@@ -676,7 +956,6 @@ export default function Page() {
             <Pagination pager={domainP} data={allowedDomains} />
           </div>
         )}
-
 
         {activeTab === 'images' && (
           <div className="card">
@@ -1045,7 +1324,6 @@ export default function Page() {
             <Pagination pager={llmChainP} data={llmPromptChains} />
           </div>
         )}
-
       </div>
 
       {modal?.type === 'image_new' && (
@@ -1054,23 +1332,35 @@ export default function Page() {
             <h3 className="modal-title">Add Image</h3>
             <div className="modal-field">
               <label className="modal-label">Upload File</label>
-              <input className="modal-input" type="file" accept="image/*"
+              <input
+                className="modal-input"
+                type="file"
+                accept="image/*"
                 onChange={async e => {
                   const file = e.target.files?.[0]
                   if (!file) return
                   const url = await handleImageUpload(file)
                   if (url) setFormData((prev: any) => ({ ...prev, url }))
-                }} />
+                }}
+              />
             </div>
             <div className="modal-field">
               <label className="modal-label">Or Paste URL</label>
-              <input className="modal-input" type="text" value={formData.url ?? ''}
-                onChange={e => setFormData((prev: any) => ({ ...prev, url: e.target.value }))} />
+              <input
+                className="modal-input"
+                type="text"
+                value={formData.url ?? ''}
+                onChange={e => setFormData((prev: any) => ({ ...prev, url: e.target.value }))}
+              />
             </div>
             <div className="modal-field">
               <label className="modal-label">Image Description</label>
-              <input className="modal-input" type="text" value={formData.image_description ?? ''}
-                onChange={e => setFormData((prev: any) => ({ ...prev, image_description: e.target.value }))} />
+              <input
+                className="modal-input"
+                type="text"
+                value={formData.image_description ?? ''}
+                onChange={e => setFormData((prev: any) => ({ ...prev, image_description: e.target.value }))}
+              />
             </div>
             <div className="modal-actions">
               <button className="btn-secondary" onClick={closeModal}>Cancel</button>
@@ -1081,61 +1371,81 @@ export default function Page() {
       )}
 
       {modal?.type === 'image_edit' && (
-        <FormModal title="Edit Image" table="images"
+        <FormModal
+          title="Edit Image"
+          table="images"
           fields={[
             { key: 'url', label: 'URL' },
             { key: 'image_description', label: 'Image Description' },
             { key: 'additional_context', label: 'Additional Context' },
           ]}
-          refresh={() => fetchTable('images', setImages, imageP.page)} />
+          refresh={() => fetchTable('images', setImages, imageP.page)}
+        />
       )}
 
       {modal?.type === 'caption_examples' && (
-        <FormModal title={modal.data?.id ? 'Edit Caption Example' : 'Add Caption Example'} table="caption_examples"
+        <FormModal
+          title={modal.data?.id ? 'Edit Caption Example' : 'Add Caption Example'}
+          table="caption_examples"
           fields={[
             { key: 'caption', label: 'Caption' },
             { key: 'explanation', label: 'Explanation' },
             { key: 'image_description', label: 'Image Description' },
             { key: 'priority', label: 'Priority', type: 'number' },
           ]}
-          refresh={() => fetchTable('caption_examples', setCaptionExamples, captionExP.page)} />
+          refresh={() => fetchTable('caption_examples', setCaptionExamples, captionExP.page)}
+        />
       )}
 
       {modal?.type === 'llm_models' && (
-        <FormModal title={modal.data?.id ? 'Edit LLM Model' : 'Add LLM Model'} table="llm_models"
+        <FormModal
+          title={modal.data?.id ? 'Edit LLM Model' : 'Add LLM Model'}
+          table="llm_models"
           fields={[
             { key: 'name', label: 'Name' },
             { key: 'llm_provider_id', label: 'Provider ID', type: 'number' },
           ]}
-          refresh={() => fetchTable('llm_models', setLlmModels, llmModelP.page)} />
+          refresh={() => fetchTable('llm_models', setLlmModels, llmModelP.page)}
+        />
       )}
 
       {modal?.type === 'llm_providers' && (
-        <FormModal title={modal.data?.id ? 'Edit LLM Provider' : 'Add LLM Provider'} table="llm_providers"
+        <FormModal
+          title={modal.data?.id ? 'Edit LLM Provider' : 'Add LLM Provider'}
+          table="llm_providers"
           fields={[{ key: 'name', label: 'Name' }]}
-          refresh={() => fetchTable('llm_providers', setLlmProviders, llmProviderP.page)} />
+          refresh={() => fetchTable('llm_providers', setLlmProviders, llmProviderP.page)}
+        />
       )}
 
       {modal?.type === 'whitelisted_emails' && (
-        <FormModal title={modal.data?.id ? 'Edit Email' : 'Add Email'} table="whitelist_email_addresses"
+        <FormModal
+          title={modal.data?.id ? 'Edit Email' : 'Add Email'}
+          table="whitelist_email_addresses"
           fields={[{ key: 'email_address', label: 'Email Address', type: 'email' }]}
-          refresh={() => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page)} />
+          refresh={() => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page)}
+        />
       )}
 
-    {modal?.type === 'allowed_signup_domains' && (
-      <FormModal title={modal.data?.id ? 'Edit Domain' : 'Add Domain'} table="allowed_signup_domains"
-        fields={[{ key: 'apex_domain', label: 'Domain (e.g. example.com)' }]}
-        refresh={() => fetchTable('allowed_signup_domains', setAllowedDomains, domainP.page)} />
-    )}
-
+      {modal?.type === 'allowed_signup_domains' && (
+        <FormModal
+          title={modal.data?.id ? 'Edit Domain' : 'Add Domain'}
+          table="allowed_signup_domains"
+          fields={[{ key: 'apex_domain', label: 'Domain (e.g. example.com)' }]}
+          refresh={() => fetchTable('allowed_signup_domains', setAllowedDomains, domainP.page)}
+        />
+      )}
 
       {modal?.type === 'humor_flavor_mix' && (
-        <FormModal title={modal.data?.id ? 'Edit Humor Flavor Mix' : 'Add Humor Flavor Mix'} table="humor_flavor_mix"
+        <FormModal
+          title={modal.data?.id ? 'Edit Humor Flavor Mix' : 'Add Humor Flavor Mix'}
+          table="humor_flavor_mix"
           fields={[
             { key: 'humor_flavor_id', label: 'Humor Flavor ID', type: 'number' },
             { key: 'caption_count', label: 'Caption Count', type: 'number' },
           ]}
-          refresh={() => fetchHumorFlavorMix(humorFlavorMixP.page)} />
+          refresh={() => fetchHumorFlavorMix(humorFlavorMixP.page)}
+        />
       )}
     </div>
   )
