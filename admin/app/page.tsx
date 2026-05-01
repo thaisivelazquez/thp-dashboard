@@ -4,13 +4,14 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase/client'
 import './styling.css'
 
-type NavGroup = 'dashboard' | 'profiles' | 'images' | 'captions' | 'humor' | 'llm'
+type NavGroup = 'dashboard' | 'profiles' | 'images' | 'captions' | 'humor' | 'terms' | 'llm'
 type Tab =
   | 'dashboard'
   | 'profiles' | 'whitelisted_emails' | 'allowed_signup_domains'
   | 'images'
   | 'captions' | 'caption_examples' | 'caption_requests'
   | 'humor_flavors' | 'humor_flavor_steps' | 'humor_flavor_mix'
+  | 'terms'
   | 'llm_models' | 'llm_providers' | 'llm_responses' | 'llm_prompt_chains'
 
 const ITEMS_PER_PAGE = 10
@@ -34,6 +35,7 @@ const NAV_GROUPS: { group: NavGroup; label: string; tabs?: { tab: Tab; label: st
       { tab: 'caption_requests', label: 'Caption Requests' },
     ],
   },
+  { group: 'terms', label: 'Terms' },   // ← ADD THIS LINE
   {
     group: 'humor', label: 'Humor',
     tabs: [
@@ -76,6 +78,8 @@ export default function Page() {
   const [sortAsc, setSortAsc] = useState(false)
   const [allowedDomains, setAllowedDomains] = useState<any[]>([])
   const domainP = usePage()
+  const [terms, setTerms] = useState<any[]>([])
+  const termP = usePage()
 
   const showToast = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ msg, type })
@@ -104,6 +108,7 @@ export default function Page() {
   const [lowestCaption, setLowestCaption] = useState<any>(null)
   const [avgLikes, setAvgLikes] = useState<number | null>(null)
   const [topFlavor, setTopFlavor] = useState<any>(null)
+  const [profileSearch, setProfileSearch] = useState('')
 
   const [captionStats, setCaptionStats] = useState({
     total: 0,
@@ -194,6 +199,23 @@ export default function Page() {
 
     setCaptionRequests(enriched)
   }
+const fetchProfiles = async (page: number, search = '') => {
+  const from = (page - 1) * ITEMS_PER_PAGE
+  let query = supabase
+    .from('profiles')
+    .select('*')
+    .order('created_datetime_utc', { ascending: sortAsc })
+    .range(from, from + ITEMS_PER_PAGE - 1)
+
+  if (search.trim()) {
+    query = query.or(
+      `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`
+    )
+  }
+
+  const { data, error } = await query
+  if (!error && data) setProfiles(data)
+}
 
   const fetchDashboardStats = async () => {
     const { data: topData } = await supabase
@@ -304,7 +326,7 @@ export default function Page() {
 
   const fetchAll = async () => {
     await Promise.all([
-      fetchTable('profiles', setProfiles, profileP.page),
+      fetchProfiles(profileP.page, profileSearch),
       fetchTable('images', setImages, imageP.page),
       fetchTable('captions', setCaptions, captionP.page, '*, images(url, image_description)'),
       fetchTable('caption_examples', setCaptionExamples, captionExP.page),
@@ -318,6 +340,7 @@ export default function Page() {
       fetchTable('llm_prompt_chains', setLlmPromptChains, llmChainP.page),
       fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page),
       fetchTable('allowed_signup_domains', setAllowedDomains, domainP.page),
+      fetchTable('terms', setTerms, termP.page),
     ])
   }
 
@@ -351,6 +374,27 @@ export default function Page() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => setUser(session?.user ?? null))
     return () => subscription.unsubscribe()
   }, [])
+
+
+useEffect(() => {
+  if (!isAdmin) return
+  fetchAll()
+  fetchDashboardStats()
+}, [
+  profileP.page, imageP.page, captionP.page, captionExP.page, captionReqP.page,
+  humorFlavorP.page, humorFlavorStepP.page, humorFlavorMixP.page,
+  llmModelP.page, llmProviderP.page, llmRespP.page, llmChainP.page, emailP.page,
+  domainP.page,
+  termP.page,   // ← ADD THIS
+  sortAsc,
+  isAdmin,
+])
+
+useEffect(() => {
+  if (!isAdmin) return
+  profileP.setPage(1)
+  fetchProfiles(1, profileSearch)
+}, [profileSearch])
 
   useEffect(() => {
     if (!isAdmin) return
@@ -440,6 +484,7 @@ export default function Page() {
     setHumorFlavorMix([])
     setLlmModels([])
     setLlmProviders([])
+    setTerms([])
     setLlmResponses([])
     setLlmPromptChains([])
     setAllowedDomains([])
@@ -524,13 +569,13 @@ export default function Page() {
     </td>
   )
 
-  const activeGroup: NavGroup =
-    ['profiles', 'whitelisted_emails', 'allowed_signup_domains'].includes(activeTab) ? 'profiles' :
-    ['captions', 'caption_examples', 'caption_requests'].includes(activeTab) ? 'captions' :
-    ['humor_flavors', 'humor_flavor_steps', 'humor_flavor_mix'].includes(activeTab) ? 'humor' :
-    ['llm_models', 'llm_providers', 'llm_responses', 'llm_prompt_chains'].includes(activeTab) ? 'llm' :
-    activeTab as NavGroup
-
+const activeGroup: NavGroup =
+  ['profiles', 'whitelisted_emails', 'allowed_signup_domains'].includes(activeTab) ? 'profiles' :
+  ['captions', 'caption_examples', 'caption_requests'].includes(activeTab) ? 'captions' :
+  activeTab === 'terms' ? 'terms' :   // ← ADD THIS LINE
+  ['humor_flavors', 'humor_flavor_steps', 'humor_flavor_mix'].includes(activeTab) ? 'humor' :
+  ['llm_models', 'llm_providers', 'llm_responses', 'llm_prompt_chains'].includes(activeTab) ? 'llm' :
+  activeTab as NavGroup
   if (!user) {
     return (
       <div className="login-wrapper">
@@ -719,11 +764,7 @@ export default function Page() {
                 <div className="stat-sub">{captionStats.privateCount.toLocaleString()} private</div>
               </div>
 
-              <div className="stat-card">
-                <div className="stat-label">Featured Captions</div>
-                <div className="stat-value">{captionStats.featuredCount.toLocaleString()}</div>
-                <div className="stat-sub">Highlighted by admins</div>
-              </div>
+
 
               <div className="stat-card">
                 <div className="stat-label">Zero-Like Captions</div>
@@ -731,11 +772,7 @@ export default function Page() {
                 <div className="stat-sub">May need review or promotion</div>
               </div>
 
-              <div className="stat-card">
-                <div className="stat-label">New Last 7 Days</div>
-                <div className="stat-value-accent">{captionStats.recent7dCount.toLocaleString()}</div>
-                <div className="stat-sub">{captionStats.recent24hCount.toLocaleString()} in last 24h</div>
-              </div>
+
             </div>
 
             <div className="card" style={{ marginTop: '16px', marginBottom: '16px' }}>
@@ -859,25 +896,58 @@ export default function Page() {
           <div className="card">
             <div className="section-header">
               <h2 className="section-title" style={{ margin: 0 }}>Profiles</h2>
-              <SortToggle />
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input
+                  type="text"
+                  className="modal-input"
+                  placeholder="Search by name or email..."
+                  value={profileSearch}
+                  onChange={e => setProfileSearch(e.target.value)}
+                  style={{ width: '240px', padding: '5px 10px', fontSize: '13px' }}
+                />
+                {profileSearch && (
+                  <button
+                    className="btn-secondary"
+                    style={{ fontSize: '12px', padding: '5px 10px' }}
+                    onClick={() => setProfileSearch('')}
+                  >
+                    ✕ Clear
+                  </button>
+                )}
+                <SortToggle />
+              </div>
             </div>
             <div className="table-wrapper">
               <table className="table">
-                <thead><tr>{['ID', 'First Name', 'Last Name', 'Email', 'Superadmin', 'In Study', 'Matrix Admin', 'Created', 'Modified'].map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
+                <thead>
+                  <tr>
+                    {['ID', 'First Name', 'Last Name', 'Email', 'Superadmin', 'In Study', 'Matrix Admin', 'Created', 'Modified'].map(h => (
+                      <th key={h} className="th">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
                 <tbody>
-                  {profiles.map(p => (
-                    <tr key={p.id}>
-                      <TextCell value={p.id} title="Profile ID" />
-                      <td className="td">{p.first_name ?? '—'}</td>
-                      <td className="td">{p.last_name ?? '—'}</td>
-                      <td className="td">{p.email ?? '—'}</td>
-                      <td className="td">{p.is_superadmin ? 'Yes' : 'No'}</td>
-                      <td className="td">{p.is_in_study ? 'Yes' : 'No'}</td>
-                      <td className="td">{p.is_matrix_admin ? 'Yes' : 'No'}</td>
-                      <td className="td">{p.created_datetime_utc ? new Date(p.created_datetime_utc).toLocaleString() : '—'}</td>
-                      <td className="td">{p.modified_datetime_utc ? new Date(p.modified_datetime_utc).toLocaleString() : '—'}</td>
+                  {profiles.length === 0 ? (
+                    <tr>
+                      <td className="td" colSpan={9} style={{ textAlign: 'center', color: '#888', padding: '24px' }}>
+                        {profileSearch ? `No profiles found for "${profileSearch}"` : 'No profiles found'}
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    profiles.map(p => (
+                      <tr key={p.id}>
+                        <TextCell value={p.id} title="Profile ID" />
+                        <td className="td">{p.first_name ?? '—'}</td>
+                        <td className="td">{p.last_name ?? '—'}</td>
+                        <td className="td">{p.email ?? '—'}</td>
+                        <td className="td">{p.is_superadmin ? 'Yes' : 'No'}</td>
+                        <td className="td">{p.is_in_study ? 'Yes' : 'No'}</td>
+                        <td className="td">{p.is_matrix_admin ? 'Yes' : 'No'}</td>
+                        <td className="td">{p.created_datetime_utc ? new Date(p.created_datetime_utc).toLocaleString() : '—'}</td>
+                        <td className="td">{p.modified_datetime_utc ? new Date(p.modified_datetime_utc).toLocaleString() : '—'}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1224,6 +1294,58 @@ export default function Page() {
           </div>
         )}
 
+    {activeTab === 'terms' && (
+      <div className="card">
+        <div className="section-header">
+          <h2 className="section-title" style={{ margin: 0 }}>Terms</h2>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <SortToggle />
+            <button className="btn-add" onClick={() => openModal('terms')}>+ Add</button>
+          </div>
+        </div>
+        <div className="table-wrapper">
+          <table className="table">
+            <thead>
+              <tr>
+                {['ID', 'Term', 'Definition', 'Example', 'Priority', 'Term Type ID', 'Created By', 'Modified By', 'Created', 'Modified', 'Actions'].map(h => (
+                  <th key={h} className="th">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {terms.length === 0 ? (
+                <tr>
+                  <td className="td" colSpan={11} style={{ textAlign: 'center', color: '#888', padding: '24px' }}>
+                    No terms found
+                  </td>
+                </tr>
+              ) : (
+                terms.map(t => (
+                  <tr key={t.id}>
+                    <td className="td">{t.id}</td>
+                    <td className="td">{t.term ?? '—'}</td>
+                    <TextCell value={t.definition} title="Definition" />
+                    <TextCell value={t.example} title="Example" />
+                    <td className="td">{t.priority ?? '—'}</td>
+                    <td className="td">{t.term_type_id ?? '—'}</td>
+                    <TextCell value={t.created_by_user_id} title="Created By" />
+                    <TextCell value={t.modified_by_user_id} title="Modified By" />
+                    <td className="td">{t.created_datetime_utc ? new Date(t.created_datetime_utc).toLocaleString() : '—'}</td>
+                    <td className="td">{t.modified_datetime_utc ? new Date(t.modified_datetime_utc).toLocaleString() : '—'}</td>
+                    <td className="td">
+                      <button className="btn-edit" onClick={() => openModal('terms', t)}>Edit</button>
+                      <button className="btn-delete" onClick={() => handleDelete('terms', t.id, 'term', () => fetchTable('terms', setTerms, termP.page))}>Delete</button>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <Pagination pager={termP} data={terms} />
+      </div>
+    )}
+
         {activeTab === 'llm_providers' && (
           <div className="card">
             <div className="section-header">
@@ -1323,6 +1445,8 @@ export default function Page() {
           </div>
         )}
       </div>
+
+
 
       {modal?.type === 'image_new' && (
         <div className="modal-overlay" onClick={closeModal}>
@@ -1424,6 +1548,20 @@ export default function Page() {
           refresh={() => fetchTable('whitelist_email_addresses', setWhitelistedEmails, emailP.page)}
         />
       )}
+  {modal?.type === 'terms' && (
+    <FormModal
+      title={modal.data?.id ? 'Edit Term' : 'Add Term'}
+      table="terms"
+      fields={[
+        { key: 'term', label: 'Term' },
+        { key: 'definition', label: 'Definition' },
+        { key: 'example', label: 'Example' },
+        { key: 'priority', label: 'Priority', type: 'number' },
+        { key: 'term_type_id', label: 'Term Type ID', type: 'number' },
+      ]}
+      refresh={() => fetchTable('terms', setTerms, termP.page)}
+    />
+  )}
 
       {modal?.type === 'allowed_signup_domains' && (
         <FormModal
