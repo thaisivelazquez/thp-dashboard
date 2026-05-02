@@ -112,8 +112,7 @@ export default function Page() {
 
   const [captionStats, setCaptionStats] = useState({
     total: 0,
-    publicCount: 0,
-    privateCount: 0,
+    totalImages: 0,
     featuredCount: 0,
     hiddenCount: 0,
     zeroLikeCount: 0,
@@ -239,6 +238,16 @@ const fetchProfiles = async (page: number, search = '') => {
     const { data: captionData } = await supabase
       .from('captions')
       .select('id, content, like_count, is_public, is_featured, created_datetime_utc')
+   const { count, error } = await supabase
+     .from('captions')
+     .select('*', { count: 'exact', head: true });
+
+
+  const { count: imgcount, error: imgerror } = await supabase
+    .from('images')
+    .select('*', { count: 'exact', head: true });
+    console.log(imgcount)
+
 
     if (captionData?.length) {
       const now = new Date()
@@ -250,9 +259,9 @@ const fetchProfiles = async (page: number, search = '') => {
 
       const likes = captionData.map(c => c.like_count ?? 0)
       const totalLikes = likes.reduce((sum, n) => sum + n, 0)
-      const total = captionData.length
-      const publicCount = captionData.filter(c => c.is_public).length
-      const privateCount = total - publicCount
+      const total = count
+      const totalImages = imgcount
+
       const featuredCount = captionData.filter(c => c.is_featured).length
       const hiddenCount = captionData.filter(c => !c.is_public).length
       const zeroLikeCount = captionData.filter(c => (c.like_count ?? 0) === 0).length
@@ -278,8 +287,7 @@ const fetchProfiles = async (page: number, search = '') => {
       setAvgLikes(avg)
       setCaptionStats({
         total,
-        publicCount,
-        privateCount,
+        totalImages,
         featuredCount,
         hiddenCount,
         zeroLikeCount,
@@ -296,8 +304,7 @@ const fetchProfiles = async (page: number, search = '') => {
       setAvgLikes(null)
       setCaptionStats({
         total: 0,
-        publicCount: 0,
-        privateCount: 0,
+        totalImages: 0 ,
         featuredCount: 0,
         hiddenCount: 0,
         zeroLikeCount: 0,
@@ -314,15 +321,45 @@ const fetchProfiles = async (page: number, search = '') => {
       setLowestCaption(null)
     }
 
-    const { data: topFlavorData } = await supabase
-      .from('humor_flavor_mix')
-      .select('caption_count, humor_flavors(slug, description)')
-      .order('caption_count', { ascending: false })
-      .limit(1)
-      .single()
+// 1. Fetch the humor_flavor_id for the 1000 most recent captions
+const { data: recentCaptions, error: trendingError } = await supabase
+  .from('captions')
+  .select('humor_flavor_id')
+  .not('humor_flavor_id', 'is', null)
+  .order('created_datetime_utc', { ascending: false })
+  .limit(100);
 
-    if (topFlavorData) setTopFlavor(topFlavorData)
+if (trendingError || !recentCaptions?.length) {
+  console.error("Could not fetch trending:", trendingError);
+  return;
+}
+
+// 2. Count the occurrences locally
+const counts = recentCaptions.reduce((acc: Record<string, number>, row) => {
+  const id = row.humor_flavor_id;
+  acc[id] = (acc[id] || 0) + 1;
+  return acc;
+}, {});
+
+// 3. Identify the ID with the highest count
+const trendingId = Object.keys(counts).reduce((a, b) => counts[a] > counts[b] ? a : b);
+
+// 4. Grab the slug for that ID
+const { data: flavorData } = await supabase
+  .from('humor_flavors')
+  .select('slug')
+  .eq('id', trendingId)
+  .single();
+
+// 5. Set your constant
+const top_flavor = {
+  slug: flavorData?.slug || 'unknown',
+  count: counts[trendingId]
+};
+console.log(top_flavor);
+    if (top_flavor) setTopFlavor(top_flavor)
   }
+
 
   const fetchAll = async () => {
     await Promise.all([
@@ -495,8 +532,7 @@ useEffect(() => {
     setTopFlavor(null)
     setCaptionStats({
       total: 0,
-      publicCount: 0,
-      privateCount: 0,
+      totalImages: 0 ,
       featuredCount: 0,
       hiddenCount: 0,
       zeroLikeCount: 0,
@@ -740,28 +776,24 @@ const activeGroup: NavGroup =
 
 
 
-              <div className="stat-card">
-                <div className="stat-label">Top Caption Likes</div>
-                <div className="stat-value-accent">{topCaption ? (topCaption.like_count ?? 0).toLocaleString() : '—'}</div>
-                <div className="stat-sub">Highest-liked caption</div>
-              </div>
+
 
               <div className="stat-card">
-                <div className="stat-label">Most Used Humor Flavor</div>
+                <div className="stat-label">Most Trending Humor Flavor, over the last 100 captions</div>
                 <div className="stat-value" style={{ fontSize: '20px' }}>
-                  {topFlavor?.humor_flavors?.slug ?? '—'}
+                  {topFlavor?.slug ?? '—'}
                 </div>
                 <div className="stat-sub">
-                  {topFlavor?.caption_count != null ? `${topFlavor.caption_count} captions` : 'No data'}
+                  {topFlavor?.count != null ? `${topFlavor.count} captions` : 'No data'}
                 </div>
               </div>
             </div>
 
             <div className="stat-cards-row" style={{ marginTop: '16px' }}>
               <div className="stat-card">
-                <div className="stat-label">Public Captions</div>
-                <div className="stat-value">{captionStats.publicCount.toLocaleString()}</div>
-                <div className="stat-sub">{captionStats.privateCount.toLocaleString()} private</div>
+                <div className="stat-label">Total amount of images in database</div>
+
+                <div className="stat-value">{captionStats.totalImages.toLocaleString()} </div>
               </div>
 
 
@@ -775,31 +807,7 @@ const activeGroup: NavGroup =
 
             </div>
 
-            <div className="card" style={{ marginTop: '16px', marginBottom: '16px' }}>
-              <div className="top-caption-header">Caption Rating Distribution</div>
-              <div style={{ padding: '16px' }}>
-                <div style={{ display: 'grid', gap: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                    <span className="top-caption-field-label">0 likes</span>
-                    <span className="badge-likes">{captionStats.zeroLikeCount}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                    <span className="top-caption-field-label">1–5 likes</span>
-                    <span className="badge-likes">{captionStats.oneToFiveLikes}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
-                    <span className="top-caption-field-label">6–20 likes</span>
-                    <span className="badge-likes">{captionStats.sixToTwentyLikes}</span>
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap' }}>
 
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginTop: '8px' }}>
-
-                  </div>
-                </div>
-              </div>
-            </div>
 
             {topFlavor?.humor_flavors?.description && (
               <div className="card" style={{ marginBottom: '16px' }}>
